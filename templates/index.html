@@ -1,0 +1,127 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>仪表盘</h2>
+<ul>
+  <li>总商品数：<b>{{ total }}</b></li>
+  <li>库存中（已录入/已到货/上架/预留）：<b>{{ in_stock }}</b></li>
+  <li>上架中：<b>{{ on_shelf }}</b></li>
+  <li>已售：<b>{{ sold }}</b></li>
+</ul>
+
+<h3>已售统计</h3>
+<ul>
+  <li>销售额合计（SGD）：<b>{{ stats.sales_total_sgd }}</b></li>
+  <li>成本合计（RMB）：<b>{{ stats.cost_total_rmb }}</b></li>
+  <li>利润合计（RMB）：<b>{{ stats.profit_total_rmb }}</b></li>
+</ul>
+
+<h3>按日统计</h3>
+<form method="get" action="{{ url_for('index') }}">
+  <div class="row">
+    <div>
+      <label>选择日期</label>
+      <input type="date" name="day" value="{{ (daily.day if daily else '') }}">
+    </div>
+    <div style="display:flex; align-items:end;">
+      <button class="btn" type="submit">确认</button>
+    </div>
+  </div>
+</form>
+
+{% if daily %}
+  <div class="row" style="margin: 10px 0;">
+    <div class="msg">
+      <b>{{ daily.day }}</b> 当日收货成本总计（RMB，仅统计 INBOUND）：<b>{{ daily.purchase_cost_rmb }}</b>
+    </div>
+    <div class="msg">
+      <b>{{ daily.day }}</b> 当日销售额（SGD，仅统计 SOLD）：<b>{{ daily.sales_total_sgd }}</b> ｜ 当日利润（RMB，仅统计 SOLD）：<b>{{ daily.profit_total_rmb }}</b>
+    </div>
+  </div>
+
+  <style>
+    /* keep consistent with items list subtle status coloring */
+    tr.status-INBOUND   td { background: #f6f7f9; }
+    tr.status-RECEIVED  td { background: #f7f7f7; }
+    tr.status-ON_SHELF  td { background: #eefaf3; }
+    tr.status-RESERVED  td { background: #fff7e6; }
+    tr.status-REPARING  td { background: #f4efff; }
+    tr.status-SOLD      td { background: #eefaf3; }
+    tr.status-MISSING   td { background: #fff1ea; }
+    tr.status-DAMAGED   td { background: #ffeef0; }
+    tr.status-RETURNED  td { background: #eefbf8; }
+    table tr:hover td { filter: brightness(0.99); }
+    tr.profit-missing td { background: #ffeef0 !important; }
+    .profit-warning { color: #b00020; font-weight: 700; }
+  </style>
+
+  <table>
+    <tr>
+      <th>名称</th><th>品牌</th><th>类型</th><th>卖家/寄卖人</th>
+      <th>成本</th><th>售价</th><th>状态</th><th>操作</th>
+    </tr>
+    {% for it in daily.get('items', []) %}
+      <tr class="status-{{ it.status }}{% if it.status == 'SOLD' and (it.get('profit') is none or it.get('profit', 0) == 0) %} profit-missing{% endif %}">
+        <td>
+          <a href="{{ url_for('item_detail', item_key=it.sku) }}" target="_blank" rel="noopener noreferrer">
+            {{ it.name }}
+          </a>
+          <div class="muted">{{ it.sku }}</div>
+        </td>
+        <td class="muted">{{ it.brand }}</td>
+        <td>
+          {% if it.source_type == "CONSIGNMENT" %}
+            <span class="tag">寄卖</span>
+          {% else %}
+            <span class="tag">收货</span>
+          {% endif %}
+        </td>
+        <td class="muted">{{ it.seller_name }}</td>
+        <td>{{ it.cost }} ({{ it.cost_currency or it.currency or "SGD" }})</td>
+        <td>
+          {% if it.status == "SOLD" %}
+            {{ it._sold.sold_price or 0 }} ({{ it._sold.sold_currency or it.listing_currency or "SGD" }})
+          {% else %}
+            {{ it.listing_price or 0 }} ({{ it.listing_currency or "SGD" }})
+          {% endif %}
+        </td>
+        <td>
+          {% if it.status == "SOLD" and it._sold.sold_at %}
+            {{ STATUS_ZH.get(it.status, it.status) }} ({{ it._sold.sold_at.strftime("%Y-%m-%d") }})
+            {% if it.get('profit') is none or it.get('profit', 0) == 0 %}
+              <span class="profit-warning"> 利润未更新</span>
+            {% endif %}
+          {% else %}
+            {{ STATUS_ZH.get(it.status, it.status) }}
+          {% endif %}
+        </td>
+        <td>
+          <a href="{{ url_for('item_detail', item_key=it.sku) }}" target="_blank" rel="noopener noreferrer">
+            <button type="button">编辑</button>
+          </a>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+<h3>按月统计</h3>
+<p class="muted">利润仅统计 RMB；销售额仅统计 SGD（未做跨币种换算）。</p>
+<table>
+  <tr>
+    <th>月份</th>
+    <th>销售件数</th>
+    <th>利润（RMB）</th>
+    <th>平均单件利润（RMB）</th>
+    <th>销售额（SGD）</th>
+  </tr>
+  {% for r in (monthly or []) %}
+    <tr>
+      <td class="muted">{{ r.month }}</td>
+      <td>{{ r.sold_cnt }}</td>
+      <td>{{ r.profit_rmb }}</td>
+      <td>{{ "%.2f"|format(r.avg_profit_rmb) }}</td>
+      <td>{{ r.sales_sgd }}</td>
+    </tr>
+  {% endfor %}
+</table>
+{% endblock %}

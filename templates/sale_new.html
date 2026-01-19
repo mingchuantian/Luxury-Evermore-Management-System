@@ -1,0 +1,84 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>创建销售单</h2>
+<p>{{ item.name }} <span class="muted">({{ item.sku }})</span></p>
+<p class="muted">成本：{{ item.cost }} ｜ 当前状态：{{ item.status }}</p>
+
+<form method="post" action="{{ url_for('sale_new_create', item_id=item._id|string) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
+  <div class="row">
+    <div>
+      <label>成交价（整数）*</label>
+      <input name="sold_price" required>
+    </div>
+    <div>
+      <label>出售价币种</label>
+      <select name="sold_currency">
+        <option value="SGD" {% if sold_currency_default=="SGD" %}selected{% endif %}>SGD</option>
+        <option value="RMB" {% if sold_currency_default=="RMB" %}selected{% endif %}>RMB</option>
+        <option value="USD" {% if sold_currency_default=="USD" %}selected{% endif %}>USD</option>
+      </select>
+    </div>
+  </div>
+
+    <div class="row">
+      <div>
+      <label>卖出时间（精确到秒）</label>
+      <input type="datetime-local" step="1" name="sold_at" id="sold_at" required>
+    </div>
+    <div></div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>买家</label>
+      <input name="buyer" value="{{ item._sold.buyer or '' }}">
+    </div>
+    <div>
+      <label>渠道</label>
+      <input name="sale_channel" placeholder="店内 / IG / Carousell / 网站" value="{{ item._sold.sale_channel or '' }}">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>付款方式</label>
+      <select name="payment_method">
+        <option value="Paynow">Paynow</option>
+        <option value="Credit Card">Credit Card</option>
+        <option value="Website payment">Website payment</option>
+        <option value="Cash">Cash</option>
+        <option value="Trade In">Trade In</option>
+      </select>
+    </div>
+    <div>
+      <label>收据编号（可修改）</label>
+      <input name="receipt_no" value="{{ receipt_no_default or '' }}">
+    </div>
+  </div>
+
+  <label>售出 inclusion（必填）</label>
+  <input name="package_inclusion" required value="{{ item._sold.package_inclusion or '' }}" placeholder="例如：Full set: Box, Dustbag, Card">
+
+  <label>销售单备注</label>
+  <textarea name="sale_note" rows="4">{{ item._sold.sale_note or '' }}</textarea>
+
+  <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <button class="btn" type="submit" name="action" value="sell">确认售出</button>
+    <button class="btn" type="submit" name="action" value="receipt">生成Receipt</button>
+  </p>
+</form>
+
+<script>
+  // datetime-local uses local time; send timezone offset so backend can convert to UTC
+  const tzOffsetMin = (new Date()).getTimezoneOffset();
+  document.getElementById("tz_offset_min").value = String(tzOffsetMin);
+
+  // default value = now (local) with seconds
+  const tzOffsetMs = tzOffsetMin * 60000;
+  const nowLocal = new Date(Date.now() - tzOffsetMs).toISOString().slice(0, 19);
+  const inp = document.getElementById("sold_at");
+  if (inp && !inp.value) inp.value = nowLocal;
+</script>
+{% endblock %}

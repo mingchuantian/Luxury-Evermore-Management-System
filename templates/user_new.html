@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>新增账号</h2>
+
+<form method="post" action="{{ url_for('users_new_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="row">
+    <div>
+      <label>用户名</label>
+      <input name="username" required>
+    </div>
+    <div>
+      <label>密码</label>
+      <input name="password" type="password" required>
+    </div>
+    <div>
+      <label>角色</label>
+      <select name="role">
+        {% for r in roles %}
+          <option value="{{ r }}">{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <p>
+    <button class="btn" type="submit">创建</button>
+    <a href="{{ url_for('users_list') }}">返回</a>
+  </p>
+</form>
+{% endblock %}
+
+

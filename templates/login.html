@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>登录</h2>
+
+<form method="post" action="{{ url_for('login_post') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="next" value="{{ next or '/' }}">
+
+  <div class="row">
+    <div>
+      <label>用户名</label>
+      <input name="username" autocomplete="username" required>
+    </div>
+    <div>
+      <label>密码</label>
+      <input name="password" type="password" autocomplete="current-password" required>
+    </div>
+  </div>
+
+  <p><button class="btn" type="submit">登录</button></p>
+</form>
+
+<p class="muted">首次使用：如果系统还没有任何账号，请访问 <a href="{{ url_for('setup') }}">/setup</a> 创建初始 Admin。</p>
+{% endblock %}
+
+

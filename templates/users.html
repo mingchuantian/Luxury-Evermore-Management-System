@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>账号管理</h2>
+
+<p><a class="btn" href="{{ url_for('users_new_form') }}">新增账号</a></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>用户名</th>
+      <th>角色</th>
+      <th>创建时间</th>
+      <th>最近登录</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for u in users %}
+    <tr>
+      <td>{{ u.get("username") }}</td>
+      <td>
+        <form method="post" action="{{ url_for('users_set_role', user_id=u.get('_id')) }}" style="display:inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <select name="role" onchange="this.form.submit()">
+            {% for r in roles %}
+              <option value="{{ r }}" {% if u.get("role")==r %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
+      <td>{{ u.get("created_at") }}</td>
+      <td>{{ u.get("last_login_at") or "" }}</td>
+      <td>
+        <form method="post" action="{{ url_for('users_reset_password', user_id=u.get('_id')) }}" style="display:inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input name="password" placeholder="新密码" style="width: 120px;">
+          <button type="submit">重置密码</button>
+        </form>
+
+        <form method="post" action="{{ url_for('users_delete', user_id=u.get('_id')) }}" style="display:inline" onsubmit="return confirm('确认删除该账号？')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">删除</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+

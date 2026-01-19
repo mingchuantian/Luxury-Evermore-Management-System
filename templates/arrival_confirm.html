@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>{{ title }}</h2>
+
+<p class="muted">
+  商品：<b>{{ item.name }}</b> <span class="muted">({{ item.sku }})</span>
+</p>
+
+<form method="post" action="{{ url_for('arrival_confirm', item_id=item._id|string) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="mode" value="{{ mode }}">
+  <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
+
+  <div class="row">
+    <div>
+      <label>确认时间（精确到秒）</label>
+      <input type="datetime-local" step="1" name="confirmed_at" id="confirmed_at" required>
+      <div class="muted">默认是当前时间；你可以改成实际发生时间。</div>
+    </div>
+    <div></div>
+  </div>
+
+  <p>
+    <button class="btn" type="submit">{{ submit_text }}</button>
+    <a class="btn" href="{{ url_for('item_detail', item_key=item.sku) }}" style="text-decoration:none; display:inline-block;">返回详情</a>
+  </p>
+</form>
+
+<script>
+  // datetime-local uses local time; send timezone offset so backend can convert to UTC
+  const tzOffsetMin = (new Date()).getTimezoneOffset();
+  document.getElementById("tz_offset_min").value = String(tzOffsetMin);
+
+  // default value = now (local) with seconds
+  const tzOffsetMs = tzOffsetMin * 60000;
+  const nowLocal = new Date(Date.now() - tzOffsetMs).toISOString().slice(0, 19);
+  const inp = document.getElementById("confirmed_at");
+  if (inp && !inp.value) inp.value = nowLocal;
+</script>
+{% endblock %}
+
+

@@ -1,0 +1,492 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
+
+<p class="muted">
+  品牌：{{ item.brand }} ｜ 类型：
+  {% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}
+  ｜ 状态：<b>{{ STATUS_ZH.get(item.status, item.status) }}</b> ｜ 成本币种：{{ item.cost_currency or item.currency }}
+</p>
+<p class="muted">包身编码（Serial Code）：{{ item.serial_code }} ｜ 内部编码：{{ item.code }} ｜ 配件：{{ item.accessories }}</p>
+
+<p class="muted">
+  卖家/寄卖人：{{ item.seller_name }} ｜ 联系方式：{{ item.seller_contact }}
+</p>
+<p class="muted">
+  成本：{{ item.cost }} ({{ item.cost_currency or item.currency }})
+  ｜ 挂价：{{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})
+  {% if item.status == "SOLD" %}
+    ｜ 成交价：{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})
+  {% endif %}
+  ｜ 利润：{{ item.profit or 0 }} ({{ item.profit_currency or item.cost_currency or item.currency }})
+</p>
+
+{% if item.shopify_sku_exist %}
+  <div style="margin: 12px 0; padding: 12px; border: 2px solid #b7e4c7; background: #f0fff4; border-radius: 10px;">
+    <div style="display:flex; gap:14px; align-items:flex-start;">
+      {% if item.shopify_details and item.shopify_details.featured_image %}
+        <img
+          src="{{ item.shopify_details.featured_image|e }}"
+          alt="Shopify featured image"
+          style="width:110px; height:110px; object-fit:cover; border-radius:10px; border:1px solid #cfe9d8;"
+          loading="lazy"
+          referrerpolicy="no-referrer"
+        >
+      {% endif %}
+      <div style="flex:1;">
+        <div style="font-weight:700; margin-bottom:6px;">Shopify</div>
+        {% if item.shopify_details and item.shopify_details.url %}
+          <div class="muted">网站 url：<a href="{{ item.shopify_details.url|e }}" target="_blank" rel="noopener noreferrer">{{ item.shopify_details.url }}</a></div>
+        {% endif %}
+        {% if item.shopify_details and item.shopify_details.title %}
+          <div class="muted">网站 title：{{ item.shopify_details.title }}</div>
+        {% endif %}
+        <div class="muted">价格 (SGD)：{{ (item.shopify_details.price if item.shopify_details else "") }}</div>
+        <div class="muted">库存：{{ (item.shopify_details.inventory_quantity if item.shopify_details else "") }}</div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% if item.status == "INBOUND" %}
+  <div style="margin: 10px 0; display:flex; gap:10px; align-items:center;">
+    <a class="btn" href="{{ url_for('arrival_confirm', item_id=item._id|string, mode='repair') }}" style="text-decoration:none; display:inline-block;">
+      已到达护理
+    </a>
+    <a class="btn" href="{{ url_for('arrival_confirm', item_id=item._id|string, mode='store') }}" style="text-decoration:none; display:inline-block;">
+      已到店
+    </a>
+    <span class="muted">（将进入时间确认页面，精确到秒）</span>
+  </div>
+{% endif %}
+
+{% if item.status == "REPARING" %}
+  <div style="margin: 10px 0; display:flex; gap:10px; align-items:center;">
+    <button class="btn" type="button" onclick="restoreInbound('{{ item._id }}', '{{ item.name|e }}')">
+      还原为 已录入（未到货）
+    </button>
+    <a class="btn" href="{{ url_for('arrival_confirm', item_id=item._id|string, mode='store') }}" style="text-decoration:none; display:inline-block;">
+      已到店
+    </a>
+    <span class="muted">（“已到店”将进入时间确认页面；“还原”会清除 start_repair_at）</span>
+  </div>
+{% endif %}
+
+{% if item.status == "RECEIVED" %}
+  <div style="margin: 10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <button class="btn" type="button" onclick="restoreReparingFromReceived('{{ item._id }}', '{{ item.name|e }}')">
+      还原为 护理中
+    </button>
+    <button class="btn" type="button" onclick="restoreInboundFromReceived('{{ item._id }}', '{{ item.name|e }}')">
+      还原为 已录入（未到货）
+    </button>
+    <a class="btn" href="{{ url_for('sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">
+      售出开单
+    </a>
+    <span class="muted">（两种“还原”都会清空 received_at）</span>
+  </div>
+{% endif %}
+
+{% if item.status == "SOLD" %}
+  <div style="margin: 10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <a class="btn" href="{{ url_for('item_receipt', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">
+      生成Receipt
+    </a>
+    <button class="btn" type="button" onclick="restoreReceivedFromSold('{{ item._id }}', '{{ item.name|e }}')">
+      还原为 已到店
+    </button>
+    <span class="muted">（将还原为已到店；会删除 sold_record 并清空利润字段）</span>
+  </div>
+{% endif %}
+
+<div style="margin: 10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+  {% if item.source_type == "CONSIGNMENT" %}
+    <a class="btn"
+       href="{{ url_for('item_consignment_agreement', item_id=item._id|string) }}"
+       target="_blank"
+       rel="noopener noreferrer"
+       style="text-decoration:none; display:inline-block;">
+      生成consignment agreement
+    </a>
+  {% elif item.source_type == "BUY_IN" %}
+    <a class="btn"
+       href="{{ url_for('item_purchase_agreement', item_id=item._id|string) }}"
+       target="_blank"
+       rel="noopener noreferrer"
+       style="text-decoration:none; display:inline-block;">
+      生成purchase agreement
+    </a>
+  {% endif %}
+  <span class="muted">（新页面打开，可直接打印或另存为 PDF）</span>
+</div>
+
+<div style="margin: 10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+  <a class="btn"
+     href="{{ url_for('item_show', item_key=item.sku) }}"
+     target="_blank"
+     rel="noopener noreferrer"
+     style="text-decoration:none; display:inline-block;">
+    打开show页面
+  </a>
+  <a class="btn"
+     href="{{ url_for('item_label', item_key=item.sku) }}"
+     style="text-decoration:none; display:inline-block;">
+    打印label
+  </a>
+  <span class="muted">（show页面为外部可见页面，label为400x600mm的PDF标签）</span>
+</div>
+
+  
+<h3>更新信息</h3>
+<form method="post" action="{{ url_for('item_update', item_id=item._id|string) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="row">
+        <div>
+          <label>包身编码（Serial Code，可选）</label>
+          <input name="serial_code" value="{{ item.serial_code }}">
+        </div>
+        <div>
+          <label>邮寄单号（可选）</label>
+          <input name="tracking_number" value="{{ item.tracking_number }}">
+        </div>
+      </div>
+    <div class="row">
+      <div>
+        <label>包含配件</label>
+        <input name="accessories" value="{{ item.accessories }}">
+      </div>
+      <div></div>
+    </div>
+  <div class="row">
+    <div>
+      <label>商品名称</label>
+      <input name="name" value="{{ item.name }}">
+    </div>
+    <div>
+      <label>品牌</label>
+      <select name="brand_select" id="brand_select">
+        {% for b in BRAND_OPTIONS %}
+          <option value="{{ b }}" {% if item.brand==b %}selected{% endif %}>{{ b }}</option>
+        {% endfor %}
+        {# 如果当前品牌不在列表里，默认走 “其他” #}
+        {% if item.brand and (item.brand not in BRAND_OPTIONS) %}
+          <option value="其他" selected>其他</option>
+        {% endif %}
+      </select>
+      <div id="brand_custom_wrap" style="display:none; margin-top:6px;">
+        <input name="brand_custom" id="brand_custom" placeholder="请输入品牌名称（其他）" value="{% if item.brand and (item.brand not in BRAND_OPTIONS) %}{{ item.brand }}{% endif %}">
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>Name in EN (for receipts and agreements)</label>
+      <input name="name_in_EN" value="{{ item.name_in_EN or '' }}">
+    </div>
+    <div></div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>卖家/寄卖人</label>
+      <input name="seller_name" value="{{ item.seller_name }}">
+    </div>
+    <div>
+      <label>卖家/寄卖人 联系方式</label>
+      <input name="seller_contact" value="{{ item.seller_contact }}">
+    </div>
+  </div>
+
+  <div class="row">
+    {% if item.status not in ["INBOUND", "REPARING", "RECEIVED", "SOLD"] %}
+      <div>
+        <label>状态</label>
+        <select name="status">
+          {% for s in STATUS %}
+            <option value="{{ s }}" {% if item.status==s %}selected{% endif %}>{{ STATUS_ZH.get(s, s) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    {% else %}
+      <div>
+        <label>状态</label>
+        <input value="{{ STATUS_ZH.get(item.status, item.status) }}" disabled>
+      </div>
+    {% endif %}
+    <div>
+      <label>成本（整数）</label>
+      <input name="cost" value="{{ item.cost }}">
+    </div>
+  </div>
+
+  {% if item.status not in ["INBOUND", "REPARING"] %}
+    <div class="row">
+      {% if item.status != "SOLD" %}
+        <div>
+          <label>挂价（整数）</label>
+          <input name="listing_price" value="{{ item.listing_price }}">
+        </div>
+        <div>
+          <label>挂价币种</label>
+          {% set lc = (item.listing_currency or "SGD") %}
+          <select name="listing_currency">
+            <option value="SGD" {% if lc=="SGD" %}selected{% endif %}>SGD</option>
+            <option value="RMB" {% if lc=="RMB" %}selected{% endif %}>RMB</option>
+            <option value="USD" {% if lc=="USD" %}selected{% endif %}>USD</option>
+          </select>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if item.status not in ["RECEIVED"] %}
+      <div class="row">
+        <div>
+          <label>利润（整数）</label>
+          <input name="profit" value="{{ item.profit }}">
+        </div>
+        <div></div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>利润币种</label>
+          {% set pc = (item.profit_currency or "RMB") %}
+          <select name="profit_currency">
+            <option value="RMB" {% if pc=="RMB" %}selected{% endif %}>RMB</option>
+            <option value="SGD" {% if pc=="SGD" %}selected{% endif %}>SGD</option>
+            <option value="USD" {% if pc=="USD" %}selected{% endif %}>USD</option>
+          </select>
+        </div>
+        <div></div>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <label>备注（可写很长，可被搜索）</label>
+  <textarea name="note" rows="9">{{ item.note }}</textarea>
+
+  <label>additional notes (for aggrements)</label>
+  <textarea name="additional_notes_for_agreements" rows="4">{{ item.additional_notes_for_agreements or '' }}</textarea>
+
+  <p><button class="btn" type="submit">保存</button></p>
+</form>
+
+<h3>图片管理</h3>
+<p class="muted">图片存放目录：./photos/{{ item.sku }}/</p>
+
+<div style="display:grid; grid-template-columns: 1fr; gap:18px;">
+
+  <!-- 1) 收货原始图 -->
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h4>
+        收货原始图片
+        <span class="muted">（{{ photo_lists.seller|length }} 张）</span>
+      </h4>
+      
+
+    <form method="post" action="/items/{{ item._id }}/photos/seller/upload" enctype="multipart/form-data">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="file" name="files" multiple accept="image/*">
+      <button class="btn" type="submit">批量上传</button>
+    </form>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
+      {% for fn in photo_lists.seller %}
+      <div style="width:160px;">
+        <img src="/photos/{{ item.sku }}/seller/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
+        <div class="muted" style="word-break:break-all;">{{ fn }}</div>
+
+        <form method="post" action="/items/{{ item._id }}/photos/seller/delete"
+              onsubmit="return confirm('确认删除的收货原始图片：{{ fn }} 吗？');">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="filename" value="{{ fn }}">
+          <button class="btn" type="submit">删除</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if item.status not in ["INBOUND", "REPARING"] %}
+    <!-- 2) 拍摄图 -->
+    <div style="border:1px solid #ddd; padding:12px;">
+      <h4>
+          拍摄图
+          <span class="muted">（{{ photo_lists.taken|length }} 张）</span>
+        
+          {% if photo_lists.taken|length > 0 %}
+            <button class="btn"
+                    onclick="confirmCopyTaken('{{ item._id }}', '{{ item.name }}')">
+              一键复制到上架图
+            </button>
+          {% endif %}
+        </h4>
+        
+
+      <form method="post" action="/items/{{ item._id }}/photos/taken/upload" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="file" name="files" multiple accept="image/*">
+        <button class="btn" type="submit">批量上传</button>
+      </form>
+
+      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
+        {% for fn in photo_lists.taken %}
+        <div style="width:160px;">
+          <img src="/photos/{{ item.sku }}/taken/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
+          <div class="muted" style="word-break:break-all;">{{ fn }}</div>
+
+          <form method="post" action="/items/{{ item._id }}/photos/taken/delete"
+                onsubmit="return confirm('确认删除的拍摄图：{{ fn }} 吗？');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="filename" value="{{ fn }}">
+            <button class="btn" type="submit">删除</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- 3) 上架图 -->
+    <div style="border:1px solid #ddd; padding:12px;">
+      <h4>
+          上架图（经过处理后）
+          <span class="muted">（{{ photo_lists.product|length }} 张）</span>
+        </h4>
+        
+
+      <form method="post" action="/items/{{ item._id }}/photos/product/upload" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="file" name="files" multiple accept="image/*">
+        <button class="btn" type="submit">批量上传</button>
+      </form>
+
+      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
+        {% for fn in photo_lists.product %}
+        <div style="width:160px;">
+          <img src="/photos/{{ item.sku }}/product/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
+          <div class="muted" style="word-break:break-all;">{{ fn }}</div>
+
+          <form method="post" action="/items/{{ item._id }}/photos/product/delete"
+                onsubmit="return confirm('确认删除的上架图：{{ fn }} 吗？');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="filename" value="{{ fn }}">
+            <button class="btn" type="submit">删除</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+</div>
+
+
+<h3>售出</h3>
+{% if item.status != "SOLD" %}
+  <p><a href="{{ url_for('sale_new_form', item_id=item._id|string) }}">创建销售单</a></p>
+{% else %}
+  <p><b>已售出</b></p>
+  {% if item._sold.sold_at %}
+    <p class="muted">售出时间：{{ item._sold.sold_at.strftime("%Y-%m-%d %H:%M:%S") }}</p>
+  {% endif %}
+  <ul>
+    <li>买家：{{ item._sold.buyer or "" }}</li>
+    <li>渠道：{{ item._sold.sale_channel or "" }}</li>
+    <li>付款方式：{{ item._sold.payment_method or "" }}</li>
+    <li>收据编号：{{ item._sold.receipt_no or "" }}</li>
+    <li>成交价：{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})</li>
+    <li>利润：{{ item.profit or 0 }}</li>
+    {% if item._sold.sale_note %}<li>销售单备注：{{ item._sold.sale_note }}</li>{% endif %}
+  </ul>
+{% endif %}
+
+<h3>操作记录</h3>
+<ul>
+  {% for a in (item.audit or [])|reverse %}
+    <li class="muted">{{ a.at }} - {{ a.action }} - {{ a.detail }}</li>
+  {% endfor %}
+</ul>
+
+<script>
+  const sel = document.getElementById("brand_select");
+  const wrap = document.getElementById("brand_custom_wrap");
+
+  function refreshBrandCustom() {
+    if (sel.value === "其他") {
+      wrap.style.display = "block";
+    } else {
+      wrap.style.display = "none";
+      const inp = document.getElementById("brand_custom");
+      if (inp) inp.value = "";
+    }
+  }
+
+  sel.addEventListener("change", refreshBrandCustom);
+  refreshBrandCustom(); // 初始化
+
+function confirmCopyTaken(itemId, name) {
+    if (!confirm(`确认将【${name}】的全部拍摄图复制到【上架图】吗？\n（不会删除原图）`)) {
+    return;
+    }
+
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+    fetch(`/items/${itemId}/photos/copy_taken_to_product`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf }
+    }).then(res => {
+    if (res.ok) location.reload();
+    else alert("复制失败");
+    });
+}
+
+function restoreInbound(itemId, name) {
+  if (!confirm(`确认要将【${name}】还原为【已录入（未到货）】吗？\n这会把 start_repair_at/received_at 设为 null。`)) return;
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+  fetch(`/items/${itemId}/action/restore_inbound`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf }
+  }).then(res => {
+    if (res.ok) location.reload();
+    else res.text().then(t => alert("操作失败：" + t));
+  }).catch(err => alert("网络错误：" + err));
+}
+
+function restoreReparingFromReceived(itemId, name) {
+  if (!confirm(`确认要将【${name}】从【已到货】还原为【护理中】吗？\n这会把 received_at 设为 null。`)) return;
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+  fetch(`/items/${itemId}/action/restore_reparing`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf }
+  }).then(res => {
+    if (res.ok) location.reload();
+    else res.text().then(t => alert("操作失败：" + t));
+  }).catch(err => alert("网络错误：" + err));
+}
+
+function restoreInboundFromReceived(itemId, name) {
+  if (!confirm(`确认要将【${name}】从【已到货】还原为【已录入（未到货）】吗？\n这会把 received_at/start_repair_at 设为 null。`)) return;
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+  fetch(`/items/${itemId}/action/restore_inbound_from_received`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf }
+  }).then(res => {
+    if (res.ok) location.reload();
+    else res.text().then(t => alert("操作失败：" + t));
+  }).catch(err => alert("网络错误：" + err));
+}
+
+function restoreReceivedFromSold(itemId, name) {
+  if (!confirm(`确认要将【${name}】从【已售出】还原为【已到店】吗？\n（将删除 sold_record，并清空 profit/profit_currency）`)) return;
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+  fetch(`/items/${itemId}/action/restore_received_from_sold`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrf }
+  }).then(res => {
+    if (res.ok) location.reload();
+    else res.text().then(t => alert("操作失败：" + t));
+  }).catch(err => alert("网络错误：" + err));
+}
+</script>
+    
+{% endblock %}

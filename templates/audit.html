@@ -1,0 +1,82 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>操作历史</h2>
+
+<form method="get" action="{{ url_for('audit_history') }}">
+  <div class="row">
+    <div>
+      <label>搜索（sku / action / target / user）</label>
+      <input name="q" value="{{ q or '' }}">
+    </div>
+    <div>
+      <label>用户（username 精确匹配）</label>
+      <input name="user" value="{{ user or '' }}">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>Action</label>
+      <select name="action" onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for a in actions %}
+          <option value="{{ a }}" {% if action==a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="display:flex; align-items:end; gap:10px;">
+      <button class="btn" type="submit">搜索</button>
+      <a href="{{ url_for('audit_history') }}">清空</a>
+    </div>
+  </div>
+</form>
+
+<p class="muted">共 {{ total }} 条，当前第 {{ page }}/{{ total_pages }} 页（每页 {{ per_page }} 条）</p>
+
+<div style="display:flex; gap:10px; margin: 10px 0;">
+  {% if page > 1 %}
+    <a class="btn" href="{{ url_for('audit_history', q=q, user=user, action=action, page=page-1) }}">上一页</a>
+  {% endif %}
+  {% if page < total_pages %}
+    <a class="btn" href="{{ url_for('audit_history', q=q, user=user, action=action, page=page+1) }}">下一页</a>
+  {% endif %}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>时间</th>
+      <th>用户</th>
+      <th>Action</th>
+      <th>SKU</th>
+      <th>Target</th>
+      <th>From</th>
+      <th>To</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="muted">{{ r.get("at")|dt8 }}</td>
+        <td>{{ r.get("by", {}).get("username") }} <span class="muted">({{ r.get("by", {}).get("user_id") }})</span></td>
+        <td><span class="tag">{{ r.get("action") }}</span></td>
+        <td>
+          {% if r.get("sku") %}
+            <a href="{{ url_for('item_detail', item_key=r.get('sku')) }}" target="_blank">{{ r.get("sku") }}</a>
+          {% endif %}
+        </td>
+        <td class="muted">{{ r.get("target") or "" }}</td>
+        {% if r.get("action") == "Change_status" %}
+          <td class="muted">{{ STATUS_ZH.get(r.get("from"), r.get("from")) }}</td>
+          <td class="muted">{{ STATUS_ZH.get(r.get("to"), r.get("to")) }}</td>
+        {% else %}
+          <td class="muted">{{ r.get("from")|dt8 }}</td>
+          <td class="muted">{{ r.get("to")|dt8 }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
+
+

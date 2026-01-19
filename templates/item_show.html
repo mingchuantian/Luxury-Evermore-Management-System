@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Item Detail - {{ sku }}</title>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      margin: 40px; 
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { 
+      color: #333; 
+      border-bottom: 2px solid #ddd;
+      padding-bottom: 10px;
+    }
+    .sku {
+      font-size: 24px;
+      font-weight: bold;
+      color: #666;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>商品信息</h1>
+  <div class="sku">SKU: {{ sku }}</div>
+</body>
+</html>
+

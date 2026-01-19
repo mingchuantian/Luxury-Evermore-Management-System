@@ -1,0 +1,162 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>{{ entry_type_zh }}</h2>
+<p class="muted">提示：请先保存商品，保存后进入详情页即可上传「收货原始图 / 拍摄图 / 上架图」。</p>
+
+<form method="post" action="{{ url_for('item_new_create') }}">
+<input type="hidden" name="_csrf" value="{{ csrf_token }}">
+<input type="hidden" name="temp_id" id="temp_id">
+
+  <input type="hidden" name="entry_type" value="{{ entry_type }}">
+
+  <div class="row">
+    <div>
+      <label>商品名称 *</label>
+      <input name="name" required>
+    </div>
+    <div>
+      <label>品牌</label>
+      <select name="brand_select" id="brand_select">
+        {% for b in BRAND_OPTIONS %}
+          <option value="{{ b }}">{{ b }}</option>
+        {% endfor %}
+      </select>
+      <div id="brand_custom_wrap" style="display:none; margin-top:6px;">
+        <input name="brand_custom" id="brand_custom" placeholder="请输入品牌名称（其他）">
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>Name in EN (for receipts and agreements)</label>
+      <input name="name_in_EN" placeholder="Optional">
+    </div>
+    <div></div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>卖家/寄卖人</label>
+      <input name="seller_name">
+    </div>
+    <div>
+      <label>卖家/寄卖人 联系方式</label>
+      <input name="seller_contact" placeholder="电话 / 微信 / IG / 邮箱等">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>成本币种</label>
+      <select name="cost_currency">
+        <option value="RMB" selected>RMB</option>
+        <option value="SGD">SGD</option>
+        <option value="USD">USD</option>
+      </select>
+      
+    </div>
+    <div>
+      <label>成本（整数）</label>
+      <input name="cost" value="0">
+    </div>
+  </div>
+  
+  <div class="row">
+    <div>
+      <label>包身编码（Serial Code，可选）</label>
+      <input name="serial_code" placeholder="包包本身绣上去/刻上去的编码">
+    </div>
+    <div>
+      <label>邮寄单号（可选）</label>
+      <input name="tracking_number" placeholder="快递/物流单号">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>收货/寄卖时间</label>
+      <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
+      <input type="datetime-local" step="1" name="purchase_at" id="purchase_at" required>
+    </div>
+    <div></div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>包含配件</label>
+      <input name="accessories" placeholder="盒 / 卡 / 防尘袋 / 肩带 / 锁等">
+    </div>
+    <div></div>
+  </div>
+  
+
+  <label>备注（可写很长，可被搜索）</label>
+  <textarea name="note" rows="7"></textarea>
+
+  <label>additional notes (for aggrements)</label>
+  <textarea name="additional_notes_for_agreements" rows="4" placeholder="Optional"></textarea>
+  
+  <p><button class="btn" type="submit">保存</button></p>
+</form>
+
+  <hr>
+  <h3>收货原始图片（可在创建商品前上传）</h3>
+  
+  <form method="post"
+        action="/tmp/photos/seller/upload"
+        enctype="multipart/form-data"
+        onsubmit="return uploadTmpPhotos(this);">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="temp_id" id="temp_id_upload">
+    <input type="file" name="files" multiple accept="image/*">
+    <button class="btn" type="submit">上传图片</button>
+  </form>
+  
+  <div class="muted">图片将在保存商品后自动归档到该商品下</div>
+
+<script>
+  const sel = document.getElementById("brand_select");
+  const wrap = document.getElementById("brand_custom_wrap");
+  sel.addEventListener("change", () => {
+    if (sel.value === "其他") {
+      wrap.style.display = "block";
+    } else {
+      wrap.style.display = "none";
+      const inp = document.getElementById("brand_custom");
+      if (inp) inp.value = "";
+    }
+  });
+
+const tempId = crypto.randomUUID();
+document.getElementById("temp_id").value = tempId;
+
+    document.getElementById("temp_id_upload").value =
+      document.getElementById("temp_id").value;
+
+    // 默认收货/寄卖日期为今天（本地时区）
+    const tzOffset = (new Date()).getTimezoneOffset() * 60000;
+    const todayLocal = new Date(Date.now() - tzOffset).toISOString().slice(0, 10);
+    // datetime-local uses local time; send timezone offset so backend can convert to UTC
+    const tzOffsetMin = (new Date()).getTimezoneOffset();
+    document.getElementById("tz_offset_min").value = String(tzOffsetMin);
+
+    // default value = now (local) with seconds
+    const tzOffsetMs = tzOffsetMin * 60000;
+    const nowLocal = new Date(Date.now() - tzOffsetMs).toISOString().slice(0, 19);
+    const rd = document.getElementById("purchase_at");
+    if (rd && !rd.value) rd.value = nowLocal;
+    
+    function uploadTmpPhotos(form) {
+      const fd = new FormData(form);
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(form.action, { method: "POST", body: fd, headers: { "X-CSRF-Token": csrf } })
+        .then(res => {
+          if (res.ok) alert("图片已上传");
+          else alert("上传失败");
+        });
+      return false; // 阻止页面跳转
+    }
+    </script>
+    
+{% endblock %}

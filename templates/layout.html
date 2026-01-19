@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>库存管理 MVP</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; }
+    nav a { margin-right: 12px; }
+    .msg { padding: 8px; margin: 10px 0; border: 1px solid #ddd; }
+    .ok { border-color: #9ad29a; }
+    .error { border-color: #e3a1a1; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .muted { color: #666; font-size: 12px; }
+    input, select, textarea { padding: 6px; width: 100%; box-sizing: border-box; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn { padding: 8px 10px; cursor: pointer; }
+    .tag { display:inline-block; padding:2px 6px; border:1px solid #ddd; border-radius:6px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <nav>
+    {% if session.get("user_id") %}
+      {% if session.get("role") in ["Management", "Staff"] %}
+        <a href="{{ url_for('outsider_index') }}">Dashboard</a>
+        <a href="{{ url_for('outsider_list_items') }}">Items</a>
+        <span class="muted">User: {{ session.get("username") }} ({{ session.get("role") }})</span>
+        <a href="{{ url_for('logout') }}">Logout</a>
+      {% else %}
+        <a href="{{ url_for('index') }}">仪表盘</a>
+        <a href="{{ url_for('list_items') }}">库存列表</a>
+        <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
+        <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
+        <a href="{{ url_for('analytics') }}">数据分析</a>
+        <a href="{{ url_for('audit_history') }}">操作历史</a>
+        <a href="{{ url_for('notes_list') }}">随记</a>
+        {% if session.get("role") == "Admin" %}
+          <a href="{{ url_for('users_list') }}">账号管理</a>
+        {% endif %}
+        <span class="muted">当前：{{ session.get("username") }}（{{ session.get("role") }}）</span>
+        <a href="{{ url_for('logout') }}">登出</a>
+      {% endif %}
+    {% else %}
+      <a href="{{ url_for('login') }}">登录</a>
+    {% endif %}
+  </nav>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for cat, msg in messages %}
+        <div class="msg {{cat}}">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</body>
+</html>

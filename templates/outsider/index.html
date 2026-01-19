@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Dashboard</h2>
+<ul>
+  <li>Total items: <b>{{ total }}</b></li>
+  <li>In stock (Inbound / Repairing / Received / On shelf / Reserved): <b>{{ in_stock }}</b></li>
+  <li>On shelf: <b>{{ on_shelf }}</b></li>
+  <li>Sold: <b>{{ sold }}</b></li>
+</ul>
+
+{% endblock %}
+
+

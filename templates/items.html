@@ -1,0 +1,264 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>库存列表</h2>
+
+<style>
+  /* subtle status coloring */
+  tr.status-INBOUND   td { background: #f6f7f9; }
+  /* RECEIVED: use previous SOLD light gray */
+  tr.status-RECEIVED  td { background: #f7f7f7; }
+  tr.status-ON_SHELF  td { background: #eefaf3; }
+  tr.status-RESERVED  td { background: #fff7e6; }
+  tr.status-REPARING  td { background: #f4efff; }
+  /* SOLD: light green */
+  tr.status-SOLD      td { background: #eefaf3; }
+  tr.status-MISSING   td { background: #fff1ea; }
+  tr.status-DAMAGED   td { background: #ffeef0; }
+  tr.status-RETURNED  td { background: #eefbf8; }
+
+  /* keep header untouched */
+  table tr:first-child th { background: #f5f5f5; }
+
+  /* hover hint (still subtle) */
+  table tr:hover td { filter: brightness(0.99); }
+
+  /* Shopify image column: keep it as tight as possible */
+  th.col-img, td.col-img { padding: 0; width: 52px; }
+  td.col-img { text-align: center; }
+  td.col-img img { display: block; margin: 2px auto; width: 68px; height: 68px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; }
+
+  /* SOLD but profit not updated: highlight row */
+  tr.profit-missing td { background: #ffeef0 !important; }
+  .profit-warning { color: #b00020; font-weight: 700; }
+</style>
+
+<form method="get" action="{{ url_for('list_items') }}">
+  <input type="hidden" name="page" value="1">
+  <div class="row">
+    <div>
+      <label>搜索（SKU/名称/品牌/卖家/备注/内部编码/包身编码/邮寄单号/收货寄卖日期(YYYY-MM-DD) 任意包含）</label>
+      <input name="q" value="{{ q }}" placeholder="例如：改色 / Chanel / 某寄卖人">
+    </div>
+    <div>
+      <label>状态筛选</label>
+      <select name="status" onchange="this.form.submit()">
+        <option value="">（全部）</option>
+        {% for s in STATUS %}
+          <option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ STATUS_ZH.get(s, s) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>类型筛选</label>
+      <select name="source_type" onchange="this.form.submit()">
+        <option value="">（全部）</option>
+        <option value="BUY_IN" {% if source_type=="BUY_IN" %}selected{% endif %}>收货</option>
+        <option value="CONSIGNMENT" {% if source_type=="CONSIGNMENT" %}selected{% endif %}>寄卖</option>
+      </select>
+    </div>
+    <div style="display:flex; align-items:end;">
+      <button class="btn" type="submit">搜索</button>
+    </div>
+  </div>
+</form>
+
+<div class="row" style="margin: 10px 0; align-items: center;">
+  <div class="muted">
+    共 {{ total }} 条｜第 {{ page }} / {{ total_pages }} 页｜每页最多 {{ per_page }} 条
+  </div>
+  <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end;">
+    {% if page > 1 %}
+      <a class="btn" href="{{ url_for('list_items', page=page-1, q=q, status=status, source_type=source_type) }}">上一页</a>
+    {% else %}
+      <button class="btn" type="button" disabled>上一页</button>
+    {% endif %}
+
+    {% if page < total_pages %}
+      <a class="btn" href="{{ url_for('list_items', page=page+1, q=q, status=status, source_type=source_type) }}">下一页</a>
+    {% else %}
+      <button class="btn" type="button" disabled>下一页</button>
+    {% endif %}
+  </div>
+</div>
+
+<table>
+  <tr>
+    <th>收货/寄卖日期</th><th class="col-img">图片</th><th>SKU</th><th>品牌 和 名称</th><th>编码</th><th>类型</th>
+    <th>卖家/寄卖人</th><th>备注</th><th>成本</th><th>售价</th><th>状态</th><th>操作</th>
+  </tr>
+  {% for it in items %}
+  <tr class="status-{{ it.status }}{% if it.status == 'SOLD' and (it.get('profit') is none or it.get('profit', 0) == 0) %} profit-missing{% endif %}">
+    <td class="muted">{{ (it.purchase_at or it.created_at).strftime("%Y-%m-%d") }}</td>
+    <td class="col-img">
+      {% if it.shopify_details and it.shopify_details.featured_image %}
+        <img src="{{ it.shopify_details.featured_image|e }}" alt="shopify image" loading="lazy" referrerpolicy="no-referrer">
+      {% endif %}
+    </td>
+    <td class="muted">
+      {{ it.sku }}
+      {% if it.shopify_sku_exist %}
+        <div class="muted">已连接Shopify</div>
+      {% endif %}
+    </td>
+    <td>
+      <a href="{{ url_for('item_detail', item_key=it.sku) }}" target="_blank" rel="noopener noreferrer">
+        {{ it.brand }} {{ it.name }}
+      </a>
+    </td>
+    <td class="muted">
+      {% if it.serial_code %}
+        {{ it.serial_code }}
+      {% else %}
+        <button type="button" onclick="addSerialCode('{{ it._id }}', '{{ it.sku }}')">添加编码</button>
+      {% endif %}
+    </td>
+    <td>
+      {% if it.source_type == "CONSIGNMENT" %}
+        <span class="tag">寄卖</span>
+      {% else %}
+        <span class="tag">收货</span>
+      {% endif %}
+    </td>
+    <td class="muted">{{ it.seller_name }}</td>
+    <td class="muted">{{ it.note }}</td>
+    <td>{{ it.cost }} ({{ it.cost_currency or it.currency or "SGD" }})</td>
+    <td>
+      {% if it.status == "SOLD" %}
+        {{ it._sold.sold_price or 0 }}
+      {% else %}
+        {{ it.listing_price or 0 }}
+      {% endif %}
+    </td>
+    <td>
+      {% if it.status == "SOLD" and it._sold.sold_at %}
+        {{ STATUS_ZH.get(it.status, it.status) }} ({{ it._sold.sold_at.strftime("%Y-%m-%d") }})
+        {% if it.get('profit') is none or it.get('profit', 0) == 0 %}
+          <span class="profit-warning"> 利润未更新</span>
+        {% endif %}
+      {% else %}
+        {{ STATUS_ZH.get(it.status, it.status) }}
+      {% endif %}
+
+      {% if it.status == "REPARING" %}
+        <div style="margin-top:6px;">
+          <button type="button" onclick="quickArriveStore('{{ it._id }}', '{{ it.sku }}')">已到店</button>
+        </div>
+        {% endif %}
+      
+      {% if it.status == "INBOUND" and it.tracking_number %}
+        <div class="muted">邮寄单号：{{ it.tracking_number }}</div>
+        <div style="margin-top:6px;">
+          <button type="button" onclick="quickArriveRepair('{{ it._id }}', '{{ it.sku }}')">到达护理</button>
+        </div>
+      {% endif %}
+      {% if it.status == "INBOUND" and (not it.tracking_number) %}
+        <div style="margin-top:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button type="button" onclick="addTrackingNumber('{{ it._id }}', '{{ it.sku }}')">添加单号</button>
+          <button type="button" onclick="quickArriveRepair('{{ it._id }}', '{{ it.sku }}')">到达护理</button>
+        </div>
+      {% endif %}
+    </td>
+    <td>
+      <a href="{{ url_for('item_detail', item_key=it.sku) }}" target="_blank" rel="noopener noreferrer">
+        <button type="button">编辑</button>
+      </a>
+      <button onclick="confirmDelete('{{ it._id }}', '{{ it.name }}')">删除</button>
+      </td>
+      
+  </tr>
+  {% endfor %}
+</table>
+<script>
+    function confirmDelete(itemId, name) {
+      if (!confirm(`确认要删除【${name}】吗？`)) return;
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(`/items/${itemId}/action/delete`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf }
+      }).then(res => {
+        if (res.ok) location.reload();
+        else res.text().then(t => alert("删除失败：" + t));
+      }).catch(err => alert("网络错误：" + err));
+    }
+
+    function addTrackingNumber(itemId, sku) {
+      const v = prompt("请输入邮寄单号（将写入该商品）");
+      if (v === null) return; // cancelled
+      const tracking = String(v).trim();
+      if (!tracking) {
+        alert("单号不能为空");
+        return;
+      }
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(`/items/${itemId}/action/set_tracking_number`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+        },
+        body: JSON.stringify({ tracking_number: tracking })
+      }).then(res => {
+        if (res.ok) location.reload();
+        else res.text().then(t => alert("保存失败：" + t));
+      }).catch(err => alert("网络错误：" + err));
+    }
+
+    function addSerialCode(itemId, sku) {
+      const v = prompt("请输入包身编码（将写入该商品）");
+      if (v === null) return; // cancelled
+      const code = String(v).trim();
+      if (!code) {
+        alert("编码不能为空");
+        return;
+      }
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(`/items/${itemId}/action/set_serial_code`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+        },
+        body: JSON.stringify({ serial_code: code })
+      }).then(res => {
+        if (res.ok) location.reload();
+        else res.text().then(t => alert("保存失败：" + t));
+      }).catch(err => alert("网络错误：" + err));
+    }
+
+    function quickArriveRepair(itemId, sku) {
+      if (!confirm(`确认将【${sku}】标记为“到达护理”？（将使用当前时间）`)) return;
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(`/items/${itemId}/action/quick_arrival_repair`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+        },
+        body: JSON.stringify({})
+      }).then(res => {
+        if (res.ok) location.reload();
+        else res.text().then(t => alert("操作失败：" + t));
+      }).catch(err => alert("网络错误：" + err));
+    }
+
+    function quickArriveStore(itemId, sku) {
+      if (!confirm(`确认将【${sku}】标记为“已到店”？（将使用当前时间）`)) return;
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      fetch(`/items/${itemId}/action/quick_arrival_store`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+        },
+        body: JSON.stringify({})
+      }).then(res => {
+          if (res.ok) location.reload();
+          else res.text().then(t => alert("操作失败：" + t));
+      }).catch(err => alert("网络错误：" + err));
+    }
+    </script>
+      
+{% endblock %}

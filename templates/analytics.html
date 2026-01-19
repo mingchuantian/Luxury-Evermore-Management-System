@@ -1,0 +1,247 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>数据分析</h2>
+
+<p class="muted">
+  说明：按 sold_record 的最后一条记录中的 sold_at（月）聚合。利润图表目前统计 <b>RMB</b>（优先使用 profit_currency，没有则回退 cost_currency）。
+  销售额图表统计 <b>SGD</b>（优先使用 sold_record 最后一条的 sold_currency，没有则回退 listing_currency，再回退 cost_currency）。未做跨币种换算。
+</p>
+
+<style>
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 980px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div style="display:grid; grid-template-columns: 1fr; gap: 18px;">
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h3>按月库存数量（按品牌堆叠）& 库存成本（RMB）</h3>
+    <p class="muted">
+      口径：只统计“当前仍在库存”的货（INBOUND/REPARING/RECEIVED/RESERVED/ON_SHELF），并按每件货的 purchase_at 所在月份分桶（缺失则回退 created_at）。
+      这张图展示的是“当前库存按收货月份的分布”，不是“当月实际收货量”。
+      柱状图：库存数量（按品牌堆叠，Top 8 + Other）。折线图：这些库存对应的收货成本合计（仅统计 cost_currency=RMB，未做跨币种换算）。
+    </p>
+    <canvas id="chartInvCountBrandCost" height="130"></canvas>
+  </div>
+
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h3>每月收货数量 & 收货成本（RMB）</h3>
+    <p class="muted">
+      口径：忽略所有货物状态，按 purchase_at 所在月份聚合（缺失则回退 created_at）。
+      柱状图：收货数量（按品牌堆叠，Top 8 + Other）。折线图：收货成本合计（仅统计 cost_currency=RMB，未做跨币种换算）。
+    </p>
+    <canvas id="chartPurchaseCountCost" height="130"></canvas>
+  </div>
+
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h3>每月总利润（RMB）</h3>
+    <canvas id="chartProfitTotal" height="110"></canvas>
+  </div>
+
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h3>每月包均利润（RMB）</h3>
+    <canvas id="chartProfitAvg" height="110"></canvas>
+  </div>
+
+  <div style="border:1px solid #ddd; padding:12px;">
+    <h3>每月销售额（SGD）</h3>
+    <canvas id="chartSalesTotal" height="110"></canvas>
+  </div>
+
+  <div class="grid-2">
+    <div style="border:1px solid #ddd; padding:12px;">
+      <h3>每周（周一到周日）售出件数</h3>
+      <canvas id="chartSoldByWeekday" height="110"></canvas>
+    </div>
+
+    <div style="border:1px solid #ddd; padding:12px;">
+      <h3>每月（每 3 天一组）售出件数</h3>
+      <canvas id="chartSoldByDayOfMonth" height="110"></canvas>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const monthLabels = {{ months|tojson }};
+  const profitTotal = {{ profit_total_series|tojson }};
+  const profitAvg = {{ profit_avg_series|tojson }};
+  const salesTotal = {{ sales_total_series|tojson }};
+
+  const weekdayLabels = {{ weekday_labels|tojson }};
+  const weekdayCounts = {{ weekday_counts|tojson }};
+
+  const domLabels = {{ day_of_month_labels|tojson }};
+  const domCounts = {{ day_of_month_counts|tojson }};
+
+  const invMonths = {{ inv_months|tojson }};
+  const invBrandLabels = {{ inv_brand_labels|tojson }};
+  const invCountsByBrand = {{ inv_counts_by_brand|tojson }}; // [brandIdx][monthIdx]
+  const invCostRmb = {{ inv_cost_rmb_series|tojson }};
+
+  const purchaseMonths = {{ purchase_months|tojson }};
+  const purchaseBrandLabels = {{ purchase_brand_labels|tojson }};
+  const purchaseCountsByBrand = {{ purchase_counts_by_brand|tojson }}; // [brandIdx][monthIdx]
+  const purchaseCostRmb = {{ purchase_cost_rmb_series|tojson }};
+
+  function hexToRgba(hex, a) {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  function mkBarChart(canvasId, labels, label, data, color) {
+    const ctx = document.getElementById(canvasId);
+    return new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: hexToRgba(color, 0.35),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: true },
+          tooltip: { mode: "index", intersect: false }
+        },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  mkBarChart("chartProfitTotal", monthLabels, "Profit Total (RMB)", profitTotal, "#2E7D32");
+  mkBarChart("chartProfitAvg", monthLabels, "Profit Avg / Bag (RMB)", profitAvg, "#1565C0");
+  mkBarChart("chartSalesTotal", monthLabels, "Sales Total (SGD)", salesTotal, "#EF6C00");
+
+  mkBarChart("chartSoldByWeekday", weekdayLabels, "Sold Count", weekdayCounts, "#5D4037");
+  mkBarChart("chartSoldByDayOfMonth", domLabels, "Sold Count", domCounts, "#6A1B9A");
+
+  // mixed chart: stacked bars (count by brand) + line (cost RMB)
+  (function mkInvMixed() {
+    const palette = [
+      "#1B5E20", "#0D47A1", "#4E342E", "#6A1B9A",
+      "#AD1457", "#EF6C00", "#00695C", "#455A64",
+      "#9E9D24",
+    ];
+    const barDatasets = invBrandLabels.map((b, i) => ({
+      type: "bar",
+      label: b,
+      data: invCountsByBrand[i] || [],
+      stack: "count",
+      borderColor: palette[i % palette.length],
+      backgroundColor: hexToRgba(palette[i % palette.length], 0.35),
+      borderWidth: 1,
+      yAxisID: "y",
+    }));
+
+    const lineDataset = {
+      type: "line",
+      label: "库存成本（RMB）",
+      data: invCostRmb,
+      borderColor: "#D32F2F",
+      backgroundColor: hexToRgba("#D32F2F", 0.15),
+      pointRadius: 2,
+      tension: 0.2,
+      yAxisID: "y1",
+    };
+
+    const ctx = document.getElementById("chartInvCountBrandCost");
+    new Chart(ctx, {
+      data: { labels: invMonths, datasets: [...barDatasets, lineDataset] },
+      options: {
+        responsive: true,
+        plugins: { tooltip: { mode: "index", intersect: false } },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            title: { display: true, text: "库存数量" }
+          },
+          y1: {
+            position: "right",
+            beginAtZero: true,
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: "库存成本（RMB）" }
+          }
+        }
+      }
+    });
+  })();
+
+  // mixed chart: stacked bars (purchase count by brand) + line (purchase cost RMB)
+  (function mkPurchaseMixed() {
+    const palette = [
+      "#1B5E20", "#0D47A1", "#4E342E", "#6A1B9A",
+      "#AD1457", "#EF6C00", "#00695C", "#455A64",
+      "#9E9D24",
+    ];
+    const ctx = document.getElementById("chartPurchaseCountCost");
+    const barDatasets = purchaseBrandLabels.map((b, i) => ({
+      type: "bar",
+      label: b,
+      data: purchaseCountsByBrand[i] || [],
+      stack: "count",
+      borderColor: palette[i % palette.length],
+      backgroundColor: hexToRgba(palette[i % palette.length], 0.35),
+      borderWidth: 1,
+      yAxisID: "y",
+    }));
+
+    new Chart(ctx, {
+      data: {
+        labels: purchaseMonths,
+        datasets: [
+          ...barDatasets,
+          {
+            type: "line",
+            label: "收货成本（RMB）",
+            data: purchaseCostRmb,
+            borderColor: "#D32F2F",
+            backgroundColor: hexToRgba("#D32F2F", 0.15),
+            pointRadius: 2,
+            tension: 0.2,
+            yAxisID: "y1",
+          }
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: { tooltip: { mode: "index", intersect: false } },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            title: { display: true, text: "收货数量" }
+          },
+          y1: {
+            position: "right",
+            beginAtZero: true,
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: "收货成本（RMB）" }
+          }
+        }
+      }
+    });
+  })();
+</script>
+{% endblock %}
+
+
