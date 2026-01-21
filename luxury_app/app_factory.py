@@ -10,6 +10,7 @@ from .auth import require_login
 from .indexes import ensure_indexes
 from .security import init_csrf
 from .routes import register_all
+from .shopify_maintenance import start_shopify_maintenance_scheduler
 
 
 def create_app():
@@ -67,6 +68,14 @@ def create_app():
 
     # Must login to browse & operate
     require_login(app, users, idle_minutes=20)
+
+    # 启动 Shopify 维护任务（后台线程，不阻塞 Flask）
+    try:
+        start_shopify_maintenance_scheduler(items, interval_hours=4.0)
+    except Exception as e:
+        # 如果启动失败，记录错误但不影响 Flask 应用启动
+        import logging
+        logging.getLogger(__name__).error(f"Failed to start Shopify maintenance scheduler: {e}", exc_info=True)
 
     return app
 

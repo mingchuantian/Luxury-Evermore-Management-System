@@ -375,7 +375,10 @@ def register(app, items, photos_root, audit_logs=None):
 
         # 生成Code128条形码
         code128 = barcode.get_barcode_class('code128')
-        barcode_instance = code128(show_url, writer=ImageWriter())
+        try:
+            barcode_instance = code128(show_url, writer=ImageWriter())
+        except Exception as e:
+            return f"生成条形码失败：{str(e)}。请确保已安装 python-barcode 和 Pillow：pip install python-barcode[pil]", 500
 
         # 设置条形码选项
         options = {
