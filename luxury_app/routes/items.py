@@ -349,6 +349,56 @@ def register(app, items, photos_root, audit_logs=None):
         sku = it.get("sku", "")
         return render_template("item_show.html", item=it, sku=sku)
 
+    @app.get("/items/<item_key>/barcode")
+    def item_barcode(item_key):
+        """生成商品条形码图片（Code128格式），内容为show页面的URL"""
+        try:
+            import barcode
+            from barcode.writer import ImageWriter
+        except ImportError:
+            return "需要安装 python-barcode 库：pip install python-barcode[pil]", 500
+
+        it = None
+        if is_object_id(item_key):
+            it = items.find_one({"_id": ObjectId(item_key)})
+        if not it:
+            it = items.find_one({"sku": item_key})
+        if not it:
+            return "未找到该商品", 404
+
+        sku = it.get("sku", "")
+        if not sku:
+            return "商品SKU为空", 400
+
+        # 构建show页面的完整URL
+        show_url = url_for("item_show", item_key=sku, _external=True)
+
+        # 生成Code128条形码
+        code128 = barcode.get_barcode_class('code128')
+        barcode_instance = code128(show_url, writer=ImageWriter())
+
+        # 设置条形码选项
+        options = {
+            'module_width': 0.3,  # 条形码宽度
+            'module_height': 15.0,  # 条形码高度
+            'quiet_zone': 2.0,  # 静默区
+            'font_size': 10,  # 字体大小
+            'text_distance': 2.0,  # 文字距离
+            'write_text': True,  # 显示文字
+        }
+
+        # 生成条形码图片到内存
+        buffer = BytesIO()
+        barcode_instance.write(buffer, options=options)
+        buffer.seek(0)
+
+        # 返回图片
+        return send_file(
+            buffer,
+            mimetype="image/png",
+            download_name=f"{sku}_barcode.png",
+        )
+
     @app.get("/items/<item_key>/label")
     def item_label(item_key):
         """生成商品标签PDF（400x600mm），包含QR码和SKU"""

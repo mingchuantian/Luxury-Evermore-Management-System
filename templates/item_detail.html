@@ -2,24 +2,36 @@
 {% block content %}
 <h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
 
-<p class="muted">
-  品牌：{{ item.brand }} ｜ 类型：
-  {% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}
-  ｜ 状态：<b>{{ STATUS_ZH.get(item.status, item.status) }}</b> ｜ 成本币种：{{ item.cost_currency or item.currency }}
-</p>
-<p class="muted">包身编码（Serial Code）：{{ item.serial_code }} ｜ 内部编码：{{ item.code }} ｜ 配件：{{ item.accessories }}</p>
+<!-- 商品信息和条形码并排显示 -->
+<div style="display: flex; gap: 20px; align-items: flex-start; margin: 10px 0;">
+  <div style="flex: 1;">
+    <p class="muted">
+      品牌：{{ item.brand }} ｜ 类型：
+      {% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}
+      ｜ 状态：<b>{{ STATUS_ZH.get(item.status, item.status) }}</b> ｜ 成本币种：{{ item.cost_currency or item.currency }}
+    </p>
+    <p class="muted">包身编码（Serial Code）：{{ item.serial_code }} ｜ 内部编码：{{ item.code }} ｜ 配件：{{ item.accessories }}</p>
 
-<p class="muted">
-  卖家/寄卖人：{{ item.seller_name }} ｜ 联系方式：{{ item.seller_contact }}
-</p>
-<p class="muted">
-  成本：{{ item.cost }} ({{ item.cost_currency or item.currency }})
-  ｜ 挂价：{{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})
-  {% if item.status == "SOLD" %}
-    ｜ 成交价：{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})
-  {% endif %}
-  ｜ 利润：{{ item.profit or 0 }} ({{ item.profit_currency or item.cost_currency or item.currency }})
-</p>
+    <p class="muted">
+      卖家/寄卖人：{{ item.seller_name }} ｜ 联系方式：{{ item.seller_contact }}
+    </p>
+    <p class="muted">
+      成本：{{ item.cost }} ({{ item.cost_currency or item.currency }})
+      ｜ 挂价：{{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})
+      {% if item.status == "SOLD" %}
+        ｜ 成交价：{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})
+      {% endif %}
+      ｜ 利润：{{ item.profit or 0 }} ({{ item.profit_currency or item.cost_currency or item.currency }})
+    </p>
+  </div>
+  
+  <!-- 条形码显示（右侧） -->
+  <div style="flex-shrink: 0; padding: 15px; border: 1px solid #ddd; background: #f9f9f9; border-radius: 5px; text-align: center; min-width: 400px;">
+    <div style="margin-bottom: 8px; font-size: 12px; color: #666;">商品展示页面条形码</div>
+    <img src="{{ url_for('item_barcode', item_key=item.sku) }}" alt="Barcode" style="max-width: 360px; height: auto;">
+    <div style="margin-top: 8px; font-size: 10px; color: #999; word-break: break-all;">{{ url_for('item_show', item_key=item.sku, _external=True) }}</div>
+  </div>
+</div>
 
 {% if item.shopify_sku_exist %}
   <div style="margin: 12px 0; padding: 12px; border: 2px solid #b7e4c7; background: #f0fff4; border-radius: 10px;">

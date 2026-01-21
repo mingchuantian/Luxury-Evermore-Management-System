@@ -58,8 +58,8 @@ def require_login(app, users_coll, idle_minutes: int = 20):
             return None
         if path.startswith("/login") or path.startswith("/logout") or path.startswith("/setup"):
             return None
-        # Exempt public item show and label pages
-        if path.startswith("/items/") and (path.endswith("/show") or path.endswith("/label")):
+        # Exempt public item show, label and barcode pages
+        if path.startswith("/items/") and (path.endswith("/show") or path.endswith("/label") or path.endswith("/barcode")):
             return None
 
         # Require session
