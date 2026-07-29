@@ -8,6 +8,7 @@ from flask import flash, redirect, render_template, request, send_file, url_for
 from models import now
 
 from ..audit import insert_audit_logs, make_change_detail, make_change_status, push_item_audits
+from ..constants import SELLABLE_STATUSES
 from ..utils import money_int, parse_datetime_local_to_utc
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 
@@ -18,8 +19,8 @@ def register(app, items, audit_logs=None):
         it = items.find_one({"_id": ObjectId(item_id)})
         if not it:
             return "未找到该商品", 404
-        if it.get("status") == "SOLD":
-            flash("该商品已售出", "error")
+        if it.get("status") not in SELLABLE_STATUSES:
+            flash("该商品当前状态不可售出", "error")
             return redirect(url_for("item_detail", item_key=item_id))
 
         sr = it.get("sold_record") or []
@@ -43,8 +44,8 @@ def register(app, items, audit_logs=None):
         it = items.find_one({"_id": ObjectId(item_id)})
         if not it:
             return "未找到该商品", 404
-        if it.get("status") == "SOLD":
-            flash("该商品已售出", "error")
+        if it.get("status") not in SELLABLE_STATUSES:
+            flash("该商品当前状态不可售出", "error")
             return redirect(url_for("item_detail", item_key=item_id))
 
         action = (request.form.get("action") or "sell").strip().lower()
@@ -129,8 +130,8 @@ def register(app, items, audit_logs=None):
             # Sale details are now stored in sold_record; we still write audit entries for traceability.
             entries.append(make_change_detail(sku=sku, target=k, from_value="", to_value=v))
 
-        items.update_one(
-            {"_id": ObjectId(item_id)},
+        result = items.update_one(
+            {"_id": ObjectId(item_id), "status": old_status},
             {
                 "$set": {
                     "status": "SOLD",
@@ -139,6 +140,10 @@ def register(app, items, audit_logs=None):
                 "$push": {"sold_record": record},
             },
         )
+        if result.modified_count != 1:
+            flash("Item status changed before the sale was saved. Please try again.", "error")
+            return redirect(url_for("item_detail", item_key=item_id))
+
         push_item_audits(items, ObjectId(item_id), entries)
         insert_audit_logs(audit_logs, entries)
 

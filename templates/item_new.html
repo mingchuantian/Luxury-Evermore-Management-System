@@ -1,11 +1,9 @@
 {% extends "layout.html" %}
 {% block content %}
 <h2>{{ entry_type_zh }}</h2>
-<p class="muted">提示：请先保存商品，保存后进入详情页即可上传「收货原始图 / 拍摄图 / 上架图」。</p>
 
-<form method="post" action="{{ url_for('item_new_create') }}">
+<form class="plain-form" method="post" action="{{ url_for('item_new_create') }}">
 <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-<input type="hidden" name="temp_id" id="temp_id">
 
   <input type="hidden" name="entry_type" value="{{ entry_type }}">
 
@@ -100,21 +98,6 @@
   <p><button class="btn" type="submit">保存</button></p>
 </form>
 
-  <hr>
-  <h3>收货原始图片（可在创建商品前上传）</h3>
-  
-  <form method="post"
-        action="/tmp/photos/seller/upload"
-        enctype="multipart/form-data"
-        onsubmit="return uploadTmpPhotos(this);">
-  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <input type="hidden" name="temp_id" id="temp_id_upload">
-    <input type="file" name="files" multiple accept="image/*">
-    <button class="btn" type="submit">上传图片</button>
-  </form>
-  
-  <div class="muted">图片将在保存商品后自动归档到该商品下</div>
-
 <script>
   const sel = document.getElementById("brand_select");
   const wrap = document.getElementById("brand_custom_wrap");
@@ -128,12 +111,6 @@
     }
   });
 
-const tempId = crypto.randomUUID();
-document.getElementById("temp_id").value = tempId;
-
-    document.getElementById("temp_id_upload").value =
-      document.getElementById("temp_id").value;
-
     // 默认收货/寄卖日期为今天（本地时区）
     const tzOffset = (new Date()).getTimezoneOffset() * 60000;
     const todayLocal = new Date(Date.now() - tzOffset).toISOString().slice(0, 10);
@@ -146,17 +123,6 @@ document.getElementById("temp_id").value = tempId;
     const nowLocal = new Date(Date.now() - tzOffsetMs).toISOString().slice(0, 19);
     const rd = document.getElementById("purchase_at");
     if (rd && !rd.value) rd.value = nowLocal;
-    
-    function uploadTmpPhotos(form) {
-      const fd = new FormData(form);
-      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
-      fetch(form.action, { method: "POST", body: fd, headers: { "X-CSRF-Token": csrf } })
-        .then(res => {
-          if (res.ok) alert("图片已上传");
-          else alert("上传失败");
-        });
-      return false; // 阻止页面跳转
-    }
     </script>
     
 {% endblock %}

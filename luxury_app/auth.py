@@ -45,7 +45,7 @@ def current_user(users_coll):
 def require_login(app, users_coll, idle_minutes: int = 20):
     """
     Global login guard + idle timeout.
-    Exempt routes: /login, /logout, /setup, /photos/*, /favicon.ico and static.
+    Exempt routes: /login, /logout, /setup, /favicon.ico and static.
     """
     idle_delta = timedelta(minutes=idle_minutes)
 
@@ -58,30 +58,9 @@ def require_login(app, users_coll, idle_minutes: int = 20):
             return None
         if path.startswith("/login") or path.startswith("/logout") or path.startswith("/setup"):
             return None
-        # Exempt public item show, label and barcode pages
-        if path.startswith("/items/") and (path.endswith("/show") or path.endswith("/label") or path.endswith("/barcode")):
-            return None
-
         # Require session
         if not session.get("user_id"):
             return redirect(url_for("login", next=path))
-
-        # Low-role restrictions + routing
-        role = session.get("role")
-        if role in (ROLE_MANAGEMENT, ROLE_STAFF):
-            # hard-disable admin-only pages
-            if path.startswith("/analytics") or path.startswith("/audit") or path.startswith("/users"):
-                return "forbidden", 403
-
-            # default landing + keep low-role on outsider UI
-            if path == "/" or path.startswith("/items") or path.startswith("/sales") or path.startswith("/photos") or path.startswith("/tmp/photos"):
-                # preserve a bit of intent for /items/<key>
-                if path.startswith("/items/") and len(path.split("/")) >= 3:
-                    key = path.split("/")[2]
-                    return redirect(url_for("outsider_item_detail", item_key=key))
-                if path.startswith("/items"):
-                    return redirect(url_for("outsider_list_items"))
-                return redirect(url_for("outsider_index"))
 
         # Idle timeout
         last_seen_raw = session.get("last_seen_at")
@@ -101,10 +80,37 @@ def require_login(app, users_coll, idle_minutes: int = 20):
             return redirect(url_for("login", next=path))
 
         # Ensure user still exists
-        if not current_user(users_coll):
+        user_doc = current_user(users_coll)
+        if not user_doc:
             logout_user()
             flash("账号已失效，请重新登录", "error")
             return redirect(url_for("login", next=path))
+
+        # Authorization is always hydrated from MongoDB. A signed session proves
+        # identity only; its cached role is never trusted as the source of truth.
+        role = user_doc.get("role")
+        if role not in ALL_ROLES:
+            logout_user()
+            return "forbidden", 403
+
+        session["username"] = user_doc.get("username", "")
+        session["role"] = role
+
+        # Low-role restrictions + routing
+        if role in (ROLE_MANAGEMENT, ROLE_STAFF):
+            # hard-disable admin-only pages
+            if path.startswith("/analytics") or path.startswith("/audit") or path.startswith("/users"):
+                return "forbidden", 403
+
+            # default landing + keep low-role on outsider UI
+            if path == "/" or path.startswith("/items") or path.startswith("/sales"):
+                # preserve a bit of intent for /items/<key>
+                if path.startswith("/items/") and len(path.split("/")) >= 3:
+                    key = path.split("/")[2]
+                    return redirect(url_for("outsider_item_detail", item_key=key))
+                if path.startswith("/items"):
+                    return redirect(url_for("outsider_list_items"))
+                return redirect(url_for("outsider_index"))
 
         _touch_last_seen()
         return None

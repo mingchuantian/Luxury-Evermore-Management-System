@@ -3,6 +3,10 @@ import secrets
 from datetime import date, datetime, timedelta, timezone
 
 
+BUSINESS_TZ = timezone(timedelta(hours=8))
+MONGO_BUSINESS_TIMEZONE = "+08:00"
+
+
 def money_int(x):
     if x is None or x == "":
         return 0
@@ -16,22 +20,14 @@ def _short_code(n=7) -> str:
     return "".join(secrets.choice(_BASE32_ALPHABET) for _ in range(n))
 
 
-def gen_internal_code_unique(items) -> str:
-    """内部编码：自动生成、不可修改。"""
-    for _ in range(20):
-        code = _short_code(10)
-        if items.count_documents({"code": code}, limit=1) == 0:
-            return code
-    return _short_code(12)
-
-
 def parse_date_yyyy_mm_dd(s: str):
     s = (s or "").strip()
     if not s:
         return None
     try:
         d = date.fromisoformat(s)  # YYYY-MM-DD
-        return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+        local_midnight = datetime(d.year, d.month, d.day, tzinfo=BUSINESS_TZ)
+        return local_midnight.astimezone(timezone.utc)
     except Exception:
         return None
 
@@ -99,17 +95,5 @@ def gen_sku_unique(items, brand: str) -> str:
 
 def is_object_id(s: str) -> bool:
     return bool(re.fullmatch(r"[0-9a-fA-F]{24}", s or ""))
-
-
-def safe_segment(s: str, max_len: int = 120) -> bool:
-    if not s or not isinstance(s, str):
-        return False
-    if len(s) > max_len:
-        return False
-    if "/" in s or "\\" in s:
-        return False
-    if ".." in s:
-        return False
-    return True
 
 

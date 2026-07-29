@@ -4,7 +4,7 @@
 <p>{{ item.name }} <span class="muted">({{ item.sku }})</span></p>
 <p class="muted">成本：{{ item.cost }} ｜ 当前状态：{{ item.status }}</p>
 
-<form method="post" action="{{ url_for('sale_new_create', item_id=item._id|string) }}">
+<form class="plain-form" method="post" action="{{ url_for('sale_new_create', item_id=item._id|string) }}">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
   <div class="row">

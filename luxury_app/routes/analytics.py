@@ -1,5 +1,6 @@
 def register(app, items):
     from ..constants import STATUS_ZH  # noqa: F401 (kept for templates if needed later)
+    from ..utils import MONGO_BUSINESS_TIMEZONE
 
     @app.get("/analytics")
     def analytics():
@@ -14,7 +15,7 @@ def register(app, items):
             {"$addFields": {"profit_ccy": {"$ifNull": ["$profit_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}}},
             {"$match": {"profit_ccy": "RMB"}},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at"}},
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "profit_total": {"$sum": {"$ifNull": ["$profit", 0]}},
                 "cnt": {"$sum": 1},
             }},
@@ -32,7 +33,7 @@ def register(app, items):
             {"$addFields": {"sold_ccy": {"$ifNull": ["$last_sale.sold_currency", {"$ifNull": ["$listing_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}]}}},
             {"$match": {"sold_ccy": "SGD"}},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at"}},
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "sales_total": {"$sum": {"$ifNull": ["$last_sale.sold_price", {"$ifNull": ["$listing_price", 0]}]}},
                 "cnt": {"$sum": 1},
             }},
@@ -60,7 +61,7 @@ def register(app, items):
             {"$match": base_match},
             {"$addFields": {"sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]}}},
             {"$match": {"sold_at": {"$ne": None}}},
-            {"$group": {"_id": {"$dayOfWeek": "$sold_at"}, "cnt": {"$sum": 1}}},
+            {"$group": {"_id": {"$dayOfWeek": {"date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}}, "cnt": {"$sum": 1}}},
             {"$sort": {"_id": 1}},
         ]))
         weekday_map = {int(r["_id"]): int(r.get("cnt", 0) or 0) for r in weekday_rows}
@@ -74,7 +75,7 @@ def register(app, items):
             {"$match": base_match},
             {"$addFields": {"sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]}}},
             {"$match": {"sold_at": {"$ne": None}}},
-            {"$addFields": {"dom": {"$dayOfMonth": "$sold_at"}}},
+            {"$addFields": {"dom": {"$dayOfMonth": {"date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}}}},
             {"$addFields": {
                 "bucket_start": {"$subtract": ["$dom", {"$mod": [{"$subtract": ["$dom", 1]}, 3]}]}
             }},
@@ -100,7 +101,7 @@ def register(app, items):
             }},
             {"$group": {
                 "_id": {
-                    "month": {"$dateToString": {"format": "%Y-%m", "date": "$dt"}},
+                    "month": {"$dateToString": {"format": "%Y-%m", "date": "$dt", "timezone": MONGO_BUSINESS_TIMEZONE}},
                     "brand": "$brand_norm",
                 },
                 "cnt": {"$sum": 1},
@@ -159,7 +160,7 @@ def register(app, items):
             }},
             {"$group": {
                 "_id": {
-                    "month": {"$dateToString": {"format": "%Y-%m", "date": "$dt"}},
+                    "month": {"$dateToString": {"format": "%Y-%m", "date": "$dt", "timezone": MONGO_BUSINESS_TIMEZONE}},
                     "brand": "$brand_norm",
                 },
                 "cnt": {"$sum": 1},

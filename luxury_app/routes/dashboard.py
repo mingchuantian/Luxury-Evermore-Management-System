@@ -4,7 +4,7 @@ from pymongo import DESCENDING
 from models import now
 
 from ..constants import STATUS_ZH
-from ..utils import parse_date_yyyy_mm_dd
+from ..utils import MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
 from datetime import timedelta
 
 
@@ -54,7 +54,7 @@ def register(app, items):
             {"$addFields": {"sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]}}},
             {"$match": {"sold_at": {"$ne": None}}},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at"}},
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "sold_cnt": {"$sum": 1},
             }},
             {"$sort": {"_id": -1}},
@@ -68,7 +68,7 @@ def register(app, items):
             {"$addFields": {"profit_ccy": {"$ifNull": ["$profit_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}}},
             {"$match": {"profit_ccy": "RMB"}},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at"}},
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "profit_rmb": {"$sum": {"$ifNull": ["$profit", 0]}},
                 "profit_cnt_rmb": {"$sum": 1},
             }},
@@ -86,7 +86,7 @@ def register(app, items):
             {"$addFields": {"sold_ccy": {"$ifNull": ["$last_sale.sold_currency", {"$ifNull": ["$listing_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}]}}},
             {"$match": {"sold_ccy": "SGD"}},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at"}},
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "sales_sgd": {"$sum": {"$ifNull": ["$last_sale.sold_price", {"$ifNull": ["$listing_price", 0]}]}},
             }},
             {"$sort": {"_id": -1}},

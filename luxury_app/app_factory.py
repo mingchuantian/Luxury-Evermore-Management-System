@@ -18,14 +18,16 @@ def create_app():
     project_root = Path(__file__).resolve().parents[1]
     template_dir = project_root / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
-    app.secret_key = os.getenv("FLASK_SECRET", "dev-secret")
+    secret_key = (os.getenv("FLASK_SECRET") or "").strip()
+    if len(secret_key) < 32:
+        raise RuntimeError(
+            "FLASK_SECRET must be set to a random value of at least 32 characters."
+        )
+    app.secret_key = secret_key
     app.url_map.strict_slashes = False
 
     # 20 minutes idle logout
     app.permanent_session_lifetime = timedelta(minutes=20)
-
-    # upload cap
-    app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(25 * 1024 * 1024)))  # 25MB
 
     init_csrf(app)
 
@@ -61,17 +63,21 @@ def create_app():
     users = db["users"]
     audit_logs = db["audit_logs"]
     notes = db["notes"]
+    background_jobs = db["background_jobs"]
     ensure_indexes(items, items_outsider, users, audit_logs, notes)
 
-    photos_root = Path(os.getenv("PHOTOS_ROOT", "./photos")).resolve()
-    register_all(app, items, items_outsider, photos_root, users, audit_logs, notes)
+    register_all(app, items, items_outsider, users, audit_logs, notes)
 
     # Must login to browse & operate
     require_login(app, users, idle_minutes=20)
 
     # 启动 Shopify 维护任务（后台线程，不阻塞 Flask）
     try:
-        start_shopify_maintenance_scheduler(items, interval_hours=4.0)
+        start_shopify_maintenance_scheduler(
+            items,
+            job_locks=background_jobs,
+            audit_logs=audit_logs,
+        )
     except Exception as e:
         # 如果启动失败，记录错误但不影响 Flask 应用启动
         import logging

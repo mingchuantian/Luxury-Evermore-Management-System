@@ -2,35 +2,26 @@
 {% block content %}
 <h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
 
-<!-- 商品信息和条形码并排显示 -->
-<div style="display: flex; gap: 20px; align-items: flex-start; margin: 10px 0;">
-  <div style="flex: 1;">
-    <p class="muted">
-      品牌：{{ item.brand }} ｜ 类型：
-      {% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}
-      ｜ 状态：<b>{{ STATUS_ZH.get(item.status, item.status) }}</b> ｜ 成本币种：{{ item.cost_currency or item.currency }}
-    </p>
-    <p class="muted">包身编码（Serial Code）：{{ item.serial_code }} ｜ 内部编码：{{ item.code }} ｜ 配件：{{ item.accessories }}</p>
+<div class="item-summary">
+  <p>
+    品牌：<strong>{{ item.brand or "—" }}</strong> ｜ 类型：
+    <strong>{% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}</strong>
+    ｜ 状态：<span class="status-badge">{{ STATUS_ZH.get(item.status, item.status) }}</span>
+    ｜ 成本币种：<strong>{{ item.cost_currency or item.currency or "—" }}</strong>
+  </p>
+  <p>包身编码（Serial Code）：<strong>{{ item.serial_code or "—" }}</strong> ｜ 配件：<strong>{{ item.accessories or "—" }}</strong></p>
 
-    <p class="muted">
-      卖家/寄卖人：{{ item.seller_name }} ｜ 联系方式：{{ item.seller_contact }}
-    </p>
-    <p class="muted">
-      成本：{{ item.cost }} ({{ item.cost_currency or item.currency }})
-      ｜ 挂价：{{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})
-      {% if item.status == "SOLD" %}
-        ｜ 成交价：{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})
-      {% endif %}
-      ｜ 利润：{{ item.profit or 0 }} ({{ item.profit_currency or item.cost_currency or item.currency }})
-    </p>
-  </div>
-  
-  <!-- 条形码显示（右侧） -->
-  <div style="flex-shrink: 0; padding: 15px; border: 1px solid #ddd; background: #f9f9f9; border-radius: 5px; text-align: center; min-width: 400px;">
-    <div style="margin-bottom: 8px; font-size: 12px; color: #666;">商品展示页面条形码</div>
-    <img src="{{ url_for('item_barcode', item_key=item.sku) }}" alt="Barcode" style="max-width: 360px; height: auto;">
-    <div style="margin-top: 8px; font-size: 10px; color: #999; word-break: break-all;">{{ url_for('item_show', item_key=item.sku, _external=True) }}</div>
-  </div>
+  <p>
+    卖家/寄卖人：<strong>{{ item.seller_name or "—" }}</strong> ｜ 联系方式：<strong>{{ item.seller_contact or "—" }}</strong>
+  </p>
+  <p>
+    成本：<strong>{{ item.cost }} ({{ item.cost_currency or item.currency }})</strong>
+    ｜ 挂价：<strong>{{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})</strong>
+    {% if item.status == "SOLD" %}
+      ｜ 成交价：<strong>{{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or item.listing_currency or "SGD" }})</strong>
+    {% endif %}
+    ｜ 利润：<strong>{{ item.profit or 0 }} ({{ item.profit_currency or item.cost_currency or item.currency }})</strong>
+  </p>
 </div>
 
 {% if item.shopify_sku_exist %}
@@ -92,9 +83,6 @@
     <button class="btn" type="button" onclick="restoreInboundFromReceived('{{ item._id }}', '{{ item.name|e }}')">
       还原为 已录入（未到货）
     </button>
-    <a class="btn" href="{{ url_for('sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">
-      售出开单
-    </a>
     <span class="muted">（两种“还原”都会清空 received_at）</span>
   </div>
 {% endif %}
@@ -129,28 +117,19 @@
       生成purchase agreement
     </a>
   {% endif %}
+  {% if item.status != "SOLD" %}
+    <a class="btn"
+       href="{{ url_for('sale_new_form', item_id=item._id|string) }}"
+       style="text-decoration:none; display:inline-block;">
+      创建销售单
+    </a>
+  {% endif %}
   <span class="muted">（新页面打开，可直接打印或另存为 PDF）</span>
 </div>
 
-<div style="margin: 10px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-  <a class="btn"
-     href="{{ url_for('item_show', item_key=item.sku) }}"
-     target="_blank"
-     rel="noopener noreferrer"
-     style="text-decoration:none; display:inline-block;">
-    打开show页面
-  </a>
-  <a class="btn"
-     href="{{ url_for('item_label', item_key=item.sku) }}"
-     style="text-decoration:none; display:inline-block;">
-    打印label
-  </a>
-  <span class="muted">（show页面为外部可见页面，label为400x600mm的PDF标签）</span>
-</div>
-
-  
+<hr>
 <h3>更新信息</h3>
-<form method="post" action="{{ url_for('item_update', item_id=item._id|string) }}">
+<form class="plain-form" method="post" action="{{ url_for('item_update', item_id=item._id|string) }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="row">
         <div>
@@ -284,120 +263,8 @@
   <p><button class="btn" type="submit">保存</button></p>
 </form>
 
-<h3>图片管理</h3>
-<p class="muted">图片存放目录：./photos/{{ item.sku }}/</p>
-
-<div style="display:grid; grid-template-columns: 1fr; gap:18px;">
-
-  <!-- 1) 收货原始图 -->
-  <div style="border:1px solid #ddd; padding:12px;">
-    <h4>
-        收货原始图片
-        <span class="muted">（{{ photo_lists.seller|length }} 张）</span>
-      </h4>
-      
-
-    <form method="post" action="/items/{{ item._id }}/photos/seller/upload" enctype="multipart/form-data">
-      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <input type="file" name="files" multiple accept="image/*">
-      <button class="btn" type="submit">批量上传</button>
-    </form>
-
-    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
-      {% for fn in photo_lists.seller %}
-      <div style="width:160px;">
-        <img src="/photos/{{ item.sku }}/seller/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
-        <div class="muted" style="word-break:break-all;">{{ fn }}</div>
-
-        <form method="post" action="/items/{{ item._id }}/photos/seller/delete"
-              onsubmit="return confirm('确认删除的收货原始图片：{{ fn }} 吗？');">
-          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-          <input type="hidden" name="filename" value="{{ fn }}">
-          <button class="btn" type="submit">删除</button>
-        </form>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-
-  {% if item.status not in ["INBOUND", "REPARING"] %}
-    <!-- 2) 拍摄图 -->
-    <div style="border:1px solid #ddd; padding:12px;">
-      <h4>
-          拍摄图
-          <span class="muted">（{{ photo_lists.taken|length }} 张）</span>
-        
-          {% if photo_lists.taken|length > 0 %}
-            <button class="btn"
-                    onclick="confirmCopyTaken('{{ item._id }}', '{{ item.name }}')">
-              一键复制到上架图
-            </button>
-          {% endif %}
-        </h4>
-        
-
-      <form method="post" action="/items/{{ item._id }}/photos/taken/upload" enctype="multipart/form-data">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input type="file" name="files" multiple accept="image/*">
-        <button class="btn" type="submit">批量上传</button>
-      </form>
-
-      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
-        {% for fn in photo_lists.taken %}
-        <div style="width:160px;">
-          <img src="/photos/{{ item.sku }}/taken/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
-          <div class="muted" style="word-break:break-all;">{{ fn }}</div>
-
-          <form method="post" action="/items/{{ item._id }}/photos/taken/delete"
-                onsubmit="return confirm('确认删除的拍摄图：{{ fn }} 吗？');">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <input type="hidden" name="filename" value="{{ fn }}">
-            <button class="btn" type="submit">删除</button>
-          </form>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-
-    <!-- 3) 上架图 -->
-    <div style="border:1px solid #ddd; padding:12px;">
-      <h4>
-          上架图（经过处理后）
-          <span class="muted">（{{ photo_lists.product|length }} 张）</span>
-        </h4>
-        
-
-      <form method="post" action="/items/{{ item._id }}/photos/product/upload" enctype="multipart/form-data">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <input type="file" name="files" multiple accept="image/*">
-        <button class="btn" type="submit">批量上传</button>
-      </form>
-
-      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
-        {% for fn in photo_lists.product %}
-        <div style="width:160px;">
-          <img src="/photos/{{ item.sku }}/product/{{ fn }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #eee;">
-          <div class="muted" style="word-break:break-all;">{{ fn }}</div>
-
-          <form method="post" action="/items/{{ item._id }}/photos/product/delete"
-                onsubmit="return confirm('确认删除的上架图：{{ fn }} 吗？');">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <input type="hidden" name="filename" value="{{ fn }}">
-            <button class="btn" type="submit">删除</button>
-          </form>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-  {% endif %}
-
-</div>
-
-
-<h3>售出</h3>
-{% if item.status != "SOLD" %}
-  <p><a href="{{ url_for('sale_new_form', item_id=item._id|string) }}">创建销售单</a></p>
-{% else %}
+{% if item.status == "SOLD" %}
+  <h3>售出</h3>
   <p><b>已售出</b></p>
   {% if item._sold.sold_at %}
     <p class="muted">售出时间：{{ item._sold.sold_at.strftime("%Y-%m-%d %H:%M:%S") }}</p>
@@ -436,21 +303,6 @@
 
   sel.addEventListener("change", refreshBrandCustom);
   refreshBrandCustom(); // 初始化
-
-function confirmCopyTaken(itemId, name) {
-    if (!confirm(`确认将【${name}】的全部拍摄图复制到【上架图】吗？\n（不会删除原图）`)) {
-    return;
-    }
-
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
-    fetch(`/items/${itemId}/photos/copy_taken_to_product`, {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrf }
-    }).then(res => {
-    if (res.ok) location.reload();
-    else alert("复制失败");
-    });
-}
 
 function restoreInbound(itemId, name) {
   if (!confirm(`确认要将【${name}】还原为【已录入（未到货）】吗？\n这会把 start_repair_at/received_at 设为 null。`)) return;

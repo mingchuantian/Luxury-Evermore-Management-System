@@ -1,10 +1,4 @@
-PHOTO_CATEGORIES = {
-    "seller": "seller photos",
-    "taken": "taken photos",
-    "product": "product photos",
-}
-
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+SELLABLE_STATUSES = ("RECEIVED", "ON_SHELF")
 
 # ---- 显示层：状态中文 ----
 STATUS_ZH = {
