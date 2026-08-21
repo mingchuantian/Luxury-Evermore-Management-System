@@ -1,0 +1,98 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
+<p class="muted">Brand: {{ item.brand }} · Type: {{ item.source_type or "" }} · Status: <b>{{ item.status }}</b></p>
+<p class="muted">Serial Code: {{ item.serial_code or "" }} · Tracking: {{ item.tracking_number or "" }} · Accessories: {{ item.accessories or "" }}</p>
+<p class="muted">Seller / Consignor: {{ item.seller_name or "" }} · Contact: {{ item.seller_contact or "" }}</p>
+<p class="muted">
+  Cost: {{ item.cost }} ({{ item.cost_currency or item.currency or "" }})
+  · Listing: {{ item.listing_price or 0 }} ({{ item.listing_currency or "SGD" }})
+  {% if item.status == "SOLD" %}· Sold: {{ item._sold.sold_price or 0 }} ({{ item._sold.sold_currency or "" }}){% endif %}
+</p>
+
+{% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}
+  <p><a class="btn" href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Mark as Sold</a></p>
+{% endif %}
+
+<hr>
+<h3>Update Information</h3>
+<form class="plain-form" method="post" action="{{ url_for('management_item_update', item_id=item._id|string) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="row">
+    <div><label>Serial Code (optional)</label><input name="serial_code" value="{{ item.serial_code }}"></div>
+    <div><label>Tracking Number (optional)</label><input name="tracking_number" value="{{ item.tracking_number }}"></div>
+  </div>
+  <div class="row">
+    <div><label>Accessories Included</label><input name="accessories" value="{{ item.accessories }}"></div><div></div>
+  </div>
+  <div class="row">
+    <div><label>Product Name</label><input name="name" value="{{ item.name }}"></div>
+    <div>
+      <label>Brand</label>
+      <select name="brand_select" id="brand_select">
+        {% for brand in BRAND_OPTIONS %}
+          {% if brand == "其他" %}
+            <option value="OTHER" {% if item.brand and item.brand not in BRAND_OPTIONS %}selected{% endif %}>Other</option>
+          {% else %}
+            <option value="{{ brand }}" {% if item.brand==brand %}selected{% endif %}>{{ brand }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <div id="brand_custom_wrap" style="display:none; margin-top:6px;">
+        <input name="brand_custom" id="brand_custom" placeholder="Enter brand name" value="{% if item.brand and item.brand not in BRAND_OPTIONS %}{{ item.brand }}{% endif %}">
+      </div>
+    </div>
+  </div>
+  <div class="row"><div><label>Name in English (for receipts and agreements)</label><input name="name_in_EN" value="{{ item.name_in_EN or '' }}"></div><div></div></div>
+  <div class="row">
+    <div><label>Seller / Consignor</label><input name="seller_name" value="{{ item.seller_name }}"></div>
+    <div><label>Seller / Consignor Contact</label><input name="seller_contact" value="{{ item.seller_contact }}"></div>
+  </div>
+  <div class="row">
+    <div><label>Status</label><input value="{{ item.status }}" disabled></div>
+    <div><label>Cost (whole number)</label><input name="cost" value="{{ item.cost }}"></div>
+  </div>
+
+  {% if item.status != "SOLD" %}
+    <div class="row">
+      <div><label>Listing Price (whole number)</label><input name="listing_price" value="{{ item.listing_price }}"></div>
+      <div>
+        <label>Listing Currency</label>
+        {% set listing_currency = item.listing_currency or "SGD" %}
+        <select name="listing_currency"><option value="SGD" {% if listing_currency=="SGD" %}selected{% endif %}>SGD</option><option value="RMB" {% if listing_currency=="RMB" %}selected{% endif %}>RMB</option><option value="USD" {% if listing_currency=="USD" %}selected{% endif %}>USD</option></select>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if item.status != "RECEIVED" %}
+    <div class="row">
+      <div><label>Profit (whole number)</label><input name="profit" value="{{ item.profit }}"></div>
+      <div>
+        <label>Profit Currency</label>
+        {% set profit_currency = item.profit_currency or "RMB" %}
+        <select name="profit_currency"><option value="RMB" {% if profit_currency=="RMB" %}selected{% endif %}>RMB</option><option value="SGD" {% if profit_currency=="SGD" %}selected{% endif %}>SGD</option><option value="USD" {% if profit_currency=="USD" %}selected{% endif %}>USD</option></select>
+      </div>
+    </div>
+  {% endif %}
+
+  <label>Notes</label><textarea name="note" rows="9">{{ item.note }}</textarea>
+  <label>Additional Notes (for agreements)</label><textarea name="additional_notes_for_agreements" rows="4">{{ item.additional_notes_for_agreements or '' }}</textarea>
+  <p><button class="btn" type="submit">Save</button></p>
+</form>
+
+<script>
+  const brandSelect = document.getElementById("brand_select");
+  const brandCustomWrap = document.getElementById("brand_custom_wrap");
+  function refreshCustomBrand() {
+    if (brandSelect.value === "OTHER") {
+      brandCustomWrap.style.display = "block";
+    } else {
+      brandCustomWrap.style.display = "none";
+      const customInput = document.getElementById("brand_custom");
+      if (customInput) customInput.value = "";
+    }
+  }
+  brandSelect.addEventListener("change", refreshCustomBrand);
+  refreshCustomBrand();
+</script>
+{% endblock %}

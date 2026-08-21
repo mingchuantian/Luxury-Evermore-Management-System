@@ -8,6 +8,7 @@
     <strong>{% if item.source_type == "CONSIGNMENT" %}寄卖{% else %}收货{% endif %}</strong>
     ｜ 状态：<span class="status-badge">{{ STATUS_ZH.get(item.status, item.status) }}</span>
     ｜ 成本币种：<strong>{{ item.cost_currency or item.currency or "—" }}</strong>
+    ｜ Ownership：<strong>{{ item.ownership or "未设置" }}</strong>
   </p>
   <p>包身编码（Serial Code）：<strong>{{ item.serial_code or "—" }}</strong> ｜ 配件：<strong>{{ item.accessories or "—" }}</strong></p>
 

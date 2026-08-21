@@ -15,12 +15,12 @@ from ..audit import (
     push_item_audits,
 )
 from ..constants import BRAND_OPTIONS, SELLABLE_STATUSES, STATUS_ZH
+from ..constants import OWNERSHIP_ADMIN
+from ..item_creation import create_item_from_form
 from ..utils import (
     find_date_yyyy_mm_dd_in_text,
-    gen_sku_unique,
     is_object_id,
     money_int,
-    parse_date_yyyy_mm_dd,
     parse_datetime_local_to_utc,
 )
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
@@ -205,83 +205,21 @@ def register(app, items, audit_logs=None):
 
     @app.post("/items/new")
     def item_new_create():
-        entry_type = request.form.get("entry_type", "BUY_IN").strip().upper()
-        if entry_type not in ["BUY_IN", "CONSIGNMENT"]:
-            entry_type = "BUY_IN"
-
-        name = request.form.get("name", "").strip()
-        name_in_EN = request.form.get("name_in_EN", "").strip()
-        additional_notes_for_agreements = request.form.get("additional_notes_for_agreements", "").strip()
-        # cost currency (legacy field name: currency)
-        cost_currency = (request.form.get("cost_currency") or request.form.get("currency") or "SGD").strip().upper()
-        cost = money_int(request.form.get("cost"))
-        note = request.form.get("note", "").strip()
-        serial_code = request.form.get("serial_code", "").strip()
-        tracking_number = request.form.get("tracking_number", "").strip()
-        accessories = request.form.get("accessories", "").strip()
-
-        purchase_at = parse_datetime_local_to_utc(
-            request.form.get("purchase_at", ""),
-            request.form.get("tz_offset_min", "0"),
-        )
-        if not purchase_at:
-            purchase_at = parse_date_yyyy_mm_dd(request.form.get("purchase_date", ""))
-
-        brand_select = request.form.get("brand_select", "").strip()
-        brand_custom = request.form.get("brand_custom", "").strip()
-        brand = brand_custom if brand_select == "其他" else brand_select
-
-        seller_name = request.form.get("seller_name", "").strip()
-        seller_contact = request.form.get("seller_contact", "").strip()
-
-        if not name:
+        entry_type = (request.form.get("entry_type") or "BUY_IN").strip().upper()
+        try:
+            doc, _ = create_item_from_form(
+                items,
+                audit_logs,
+                request.form,
+                ownership=OWNERSHIP_ADMIN,
+            )
+        except ValueError:
             flash("商品名称不能为空", "error")
             back = "item_new_buyin_form" if entry_type == "BUY_IN" else "item_new_consignment_form"
             return redirect(url_for(back))
 
-        sku = gen_sku_unique(items, brand)
-        doc = {
-            "sku": sku,
-            "name": name,
-            "name_in_EN": name_in_EN,
-            "brand": brand,
-            "seller_name": seller_name,
-            "seller_contact": seller_contact,
-            "cost_currency": cost_currency,
-            "cost": cost,
-            "status": "INBOUND",
-            "note": note,
-            "additional_notes_for_agreements": additional_notes_for_agreements,
-            "created_at": now(),
-            "updated_at": now(),
-            "purchase_at": purchase_at or now(),
-            "received_at": None,
-            "serial_code": serial_code,
-            "tracking_number": tracking_number,
-            "accessories": accessories,
-            "source_type": entry_type,
-            "is_buy_in": entry_type == "BUY_IN",
-            "is_consignment": entry_type == "CONSIGNMENT",
-            "audit": [],
-        }
-
-        res = items.insert_one(doc)
-        item_oid = res.inserted_id
-        # Audit: creation is represented as a status set + detail sets (from empty -> initial value)
-        entries = [make_change_status(sku=sku, from_status="", to_status="INBOUND")]
-        for k in [
-            "name", "name_in_EN", "brand", "seller_name", "seller_contact",
-            "cost_currency", "cost",
-            "purchase_at", "source_type",
-            "note", "serial_code", "tracking_number", "accessories",
-            "additional_notes_for_agreements",
-        ]:
-            entries.append(make_change_detail(sku=sku, target=k, from_value="", to_value=doc.get(k, "")))
-        push_item_audits(items, item_oid, entries)
-        insert_audit_logs(audit_logs, entries)
-
         flash("已新增商品", "ok")
-        return redirect(url_for("item_detail", item_key=sku))
+        return redirect(url_for("item_detail", item_key=doc["sku"]))
 
     # ---------------- 商品详情 / 更新 ----------------  
     @app.get("/items/<item_key>")

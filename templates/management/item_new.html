@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>{{ entry_type_label }}</h2>
+
+<form class="plain-form" method="post" action="{{ url_for('management_item_new_create') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="entry_type" value="{{ entry_type }}">
+
+  <div class="row">
+    <div><label>Product Name *</label><input name="name" required></div>
+    <div>
+      <label>Brand</label>
+      <select name="brand_select" id="brand_select">
+        {% for brand in BRAND_OPTIONS %}
+          {% if brand == "其他" %}<option value="OTHER">Other</option>{% else %}<option value="{{ brand }}">{{ brand }}</option>{% endif %}
+        {% endfor %}
+      </select>
+      <div id="brand_custom_wrap" style="display:none; margin-top:6px;">
+        <input name="brand_custom" id="brand_custom" placeholder="Enter brand name">
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div><label>Name in English (for receipts and agreements)</label><input name="name_in_EN" placeholder="Optional"></div>
+    <div></div>
+  </div>
+  <div class="row">
+    <div><label>Seller / Consignor</label><input name="seller_name"></div>
+    <div><label>Seller / Consignor Contact</label><input name="seller_contact" placeholder="Phone / WhatsApp / Instagram / Email"></div>
+  </div>
+  <div class="row">
+    <div>
+      <label>Cost Currency</label>
+      <select name="cost_currency"><option value="SGD" selected>SGD</option><option value="RMB">RMB</option><option value="USD">USD</option></select>
+    </div>
+    <div><label>Cost (whole number)</label><input name="cost" value="0"></div>
+  </div>
+  <div class="row">
+    <div><label>Serial Code (optional)</label><input name="serial_code" placeholder="Code printed or stamped on the item"></div>
+    <div><label>Tracking Number (optional)</label><input name="tracking_number" placeholder="Courier or shipment tracking number"></div>
+  </div>
+  <div class="row">
+    <div>
+      <label>Buy-In / Consignment Date and Time</label>
+      <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
+      <input type="datetime-local" step="1" name="purchase_at" id="purchase_at" required>
+    </div>
+    <div></div>
+  </div>
+  <div class="row">
+    <div><label>Accessories Included</label><input name="accessories" placeholder="Box / Card / Dust Bag / Strap / Lock"></div>
+    <div></div>
+  </div>
+  <label>Notes</label><textarea name="note" rows="7"></textarea>
+  <label>Additional Notes (for agreements)</label><textarea name="additional_notes_for_agreements" rows="4" placeholder="Optional"></textarea>
+  <p><button class="btn" type="submit">Save</button></p>
+</form>
+
+<script>
+  const brandSelect = document.getElementById("brand_select");
+  const brandCustomWrap = document.getElementById("brand_custom_wrap");
+  function refreshCustomBrand() {
+    if (brandSelect.value === "OTHER") {
+      brandCustomWrap.style.display = "block";
+    } else {
+      brandCustomWrap.style.display = "none";
+      const customInput = document.getElementById("brand_custom");
+      if (customInput) customInput.value = "";
+    }
+  }
+  brandSelect.addEventListener("change", refreshCustomBrand);
+  refreshCustomBrand();
+  const timezoneOffsetMinutes = (new Date()).getTimezoneOffset();
+  document.getElementById("tz_offset_min").value = String(timezoneOffsetMinutes);
+  const localNow = new Date(Date.now() - timezoneOffsetMinutes * 60000).toISOString().slice(0, 19);
+  const purchaseAt = document.getElementById("purchase_at");
+  if (purchaseAt && !purchaseAt.value) purchaseAt.value = localNow;
+</script>
+{% endblock %}

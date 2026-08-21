@@ -21,7 +21,7 @@ def _safe_create_index(coll, keys, **kwargs):
         raise
 
 
-def ensure_indexes(items, items_outsider, users, audit_logs, notes):
+def ensure_indexes(items, users, audit_logs, notes):
     _safe_create_index(items, [("created_at", DESCENDING)])
     _safe_create_index(items, [("purchase_at", DESCENDING)])
     _safe_create_index(items, [("status", ASCENDING)])
@@ -29,16 +29,13 @@ def ensure_indexes(items, items_outsider, users, audit_logs, notes):
     _safe_create_index(items, [("brand", ASCENDING)])
     _safe_create_index(items, [("seller_name", ASCENDING)])
     _safe_create_index(items, [("seller_contact", ASCENDING)])
-
-    # outsider collection (same shape, separate dataset)
-    _safe_create_index(items_outsider, [("created_at", DESCENDING)])
-    _safe_create_index(items_outsider, [("purchase_at", DESCENDING)])
-    _safe_create_index(items_outsider, [("status", ASCENDING)])
-    # Use unique sku index; avoid sparse option to prevent conflicts with existing sku_1 indexes.
-    _safe_create_index(items_outsider, [("sku", ASCENDING)], unique=True, name="sku_1")
-    _safe_create_index(items_outsider, [("brand", ASCENDING)])
-    _safe_create_index(items_outsider, [("seller_name", ASCENDING)])
-    _safe_create_index(items_outsider, [("seller_contact", ASCENDING)])
+    _safe_create_index(items, [("ownership", ASCENDING), ("created_at", DESCENDING)])
+    _safe_create_index(items, [("ownership", ASCENDING), ("status", ASCENDING)])
+    _safe_create_index(items, [
+        ("ownership", ASCENDING),
+        ("status", ASCENDING),
+        ("sold_record.sold_at", DESCENDING),
+    ])
 
     _safe_create_index(users, [("username", ASCENDING)], unique=True)
 

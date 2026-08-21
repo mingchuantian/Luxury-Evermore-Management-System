@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Mark as Sold</h2>
+<p>{{ item.name }} <span class="muted">({{ item.sku }})</span></p>
+<p class="muted">Current status: {{ item.status }}</p>
+<form class="plain-form" method="post" action="{{ url_for(submit_endpoint, item_id=item._id|string) }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="tz_offset_min" id="tz_offset_min" value="">
+  <div class="row">
+    <div><label>Sold Price (whole number) *</label><input name="sold_price" required></div>
+    <div><label>Currency</label><select name="sold_currency"><option value="SGD" {% if sold_currency_default=="SGD" %}selected{% endif %}>SGD</option><option value="RMB" {% if sold_currency_default=="RMB" %}selected{% endif %}>RMB</option><option value="USD" {% if sold_currency_default=="USD" %}selected{% endif %}>USD</option></select></div>
+  </div>
+  <div class="row"><div><label>Sold Date and Time</label><input type="datetime-local" step="1" name="sold_at" id="sold_at" required></div><div></div></div>
+  <div class="row"><div><label>Buyer</label><input name="buyer" value="{{ item._sold.buyer or '' }}"></div><div><label>Sales Channel</label><input name="sale_channel" placeholder="In-store / Instagram / Carousell / Website" value="{{ item._sold.sale_channel or '' }}"></div></div>
+  <div class="row">
+    <div><label>Payment Method</label><select name="payment_method"><option value="Paynow">Paynow</option><option value="Credit Card">Credit Card</option><option value="Website payment">Website payment</option><option value="Cash">Cash</option><option value="Trade In">Trade In</option></select></div>
+    <div><label>Receipt Number</label><input name="receipt_no" value="{{ receipt_no_default or '' }}"></div>
+  </div>
+  <label>Package Inclusion *</label><input name="package_inclusion" required value="{{ item._sold.package_inclusion or '' }}" placeholder="Example: Full set: Box, Dustbag, Card">
+  <label>Sale Note</label><textarea name="sale_note" rows="4">{{ item._sold.sale_note or '' }}</textarea>
+  <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"><button class="btn" type="submit" name="action" value="sell">Confirm Sale</button><button class="btn" type="submit" name="action" value="receipt">Generate Receipt</button></p>
+</form>
+<script>
+  const timezoneOffsetMinutes = (new Date()).getTimezoneOffset();
+  document.getElementById("tz_offset_min").value = String(timezoneOffsetMinutes);
+  const localNow = new Date(Date.now() - timezoneOffsetMinutes * 60000).toISOString().slice(0, 19);
+  const soldAt = document.getElementById("sold_at");
+  if (soldAt && !soldAt.value) soldAt.value = localNow;
+</script>
+{% endblock %}

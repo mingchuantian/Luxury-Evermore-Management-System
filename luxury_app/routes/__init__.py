@@ -5,15 +5,15 @@ from .sales import register as register_sales
 from .auth import register as register_auth
 from .users import register as register_users
 from .audit import register as register_audit
-from .outsider import register as register_outsider
+from .management import register as register_management
 from .notes import register as register_notes
 
 
-def register_all(app, items, items_outsider, users, audit_logs, notes):
+def register_all(app, items, users, audit_logs, notes):
     register_auth(app, users)
     register_users(app, users)
     register_audit(app, audit_logs)
-    register_outsider(app, items_outsider, audit_logs=audit_logs)
+    register_management(app, items, audit_logs=audit_logs)
     register_dashboard(app, items)
     register_items(app, items, audit_logs=audit_logs)
     register_sales(app, items, audit_logs=audit_logs)

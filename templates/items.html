@@ -118,6 +118,7 @@
       {% else %}
         <span class="tag">收货</span>
       {% endif %}
+      <div class="muted">{{ it.ownership or "未设置 ownership" }}</div>
     </td>
     <td class="muted">{{ it.seller_name }}</td>
     <td class="muted">{{ it.note }}</td>

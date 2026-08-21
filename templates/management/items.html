@@ -1,0 +1,117 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Items</h2>
+
+<style>
+  tr.status-RECEIVED td { background: #f7f7f7; }
+  tr.status-ON_SHELF td { background: #eefaf3; }
+  tr.status-SOLD td { background: #eefaf3; }
+  table tr:first-child th { background: #f5f5f5; }
+  th.col-img, td.col-img { padding: 0; width: 52px; }
+  td.col-img { text-align: center; }
+  td.col-img img { display: block; margin: 2px auto; width: 68px; height: 68px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; }
+</style>
+
+<form method="get" action="{{ url_for('management_list_items') }}">
+  <input type="hidden" name="page" value="1">
+  <div class="row">
+    <div><label>Search (SKU / Name / Brand / Note / Tracking / Serial)</label><input name="q" value="{{ q or '' }}"></div>
+    <div>
+      <label>Status</label>
+      <select name="status" onchange="this.form.submit()">
+        <option value="">(All)</option>
+        {% for item_status in MANAGEMENT_STATUSES %}
+          <option value="{{ item_status }}" {% if status==item_status %}selected{% endif %}>{{ item_status }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>Type</label>
+      <select name="source_type" onchange="this.form.submit()">
+        <option value="">(All)</option>
+        <option value="BUY_IN" {% if source_type=="BUY_IN" %}selected{% endif %}>Buy-in</option>
+        <option value="CONSIGNMENT" {% if source_type=="CONSIGNMENT" %}selected{% endif %}>Consignment</option>
+      </select>
+    </div>
+    <div style="display:flex; align-items:end;"><button class="btn" type="submit">Search</button></div>
+  </div>
+</form>
+
+<div class="row" style="margin: 10px 0; align-items: center;">
+  <div class="muted">Total {{ total }} · Page {{ page }}/{{ total_pages }} · Up to {{ per_page }} per page</div>
+  <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end;">
+    {% if page > 1 %}<a class="btn" href="{{ url_for('management_list_items', page=page-1, q=q, status=status, source_type=source_type) }}">Prev</a>{% else %}<button class="btn" type="button" disabled>Prev</button>{% endif %}
+    {% if page < total_pages %}<a class="btn" href="{{ url_for('management_list_items', page=page+1, q=q, status=status, source_type=source_type) }}">Next</a>{% else %}<button class="btn" type="button" disabled>Next</button>{% endif %}
+  </div>
+</div>
+
+{% macro table_header() %}
+  <tr><th>Date</th><th class="col-img">Image</th><th>SKU</th><th>Name</th><th>Brand</th><th>Type</th><th>Seller</th><th>Note</th><th>Cost</th><th>Price</th><th>Status</th><th>Action</th></tr>
+{% endmacro %}
+
+<h3>Management Items</h3>
+{% if management_items %}
+  <table>
+    {{ table_header() }}
+    {% for item in management_items %}
+      <tr class="status-{{ item.status }}">
+        <td class="muted">{{ (item.purchase_at or item.created_at).strftime("%Y-%m-%d") }}</td>
+        <td class="col-img">
+          {% if item.shopify_details and item.shopify_details.featured_image %}
+            <img src="{{ item.shopify_details.featured_image|e }}" alt="shopify image" loading="lazy" referrerpolicy="no-referrer">
+          {% endif %}
+        </td>
+        <td class="muted">{{ item.sku }}</td>
+        <td><a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
+        <td class="muted">{{ item.brand }}</td>
+        <td class="muted">{{ item.source_type or "" }}</td>
+        <td class="muted">{{ item.seller_name or "" }}</td>
+        <td class="muted">{{ item.note or "" }}</td>
+        <td>{{ item.cost }} ({{ item.cost_currency or item.currency or "" }})</td>
+        <td>{% if item.status == "SOLD" %}{{ item._sold.sold_price or 0 }}{% else %}{{ item.listing_price or 0 }}{% endif %}</td>
+        <td>{{ item.status }}</td>
+        <td>
+          <a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer"><button type="button">Edit</button></a>
+          {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}<a href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}"><button type="button">Mark as Sold</button></a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p class="muted">No Management items found.</p>
+{% endif %}
+
+<h3>Admin Items</h3>
+{% if admin_items %}
+  <table>
+    {{ table_header() }}
+    {% for item in admin_items %}
+      <tr class="status-{{ item.status }}">
+        <td class="muted">{{ (item.purchase_at or item.created_at).strftime("%Y-%m-%d") }}</td>
+        <td class="col-img">
+          {% if item.shopify_details and item.shopify_details.featured_image %}
+            <img src="{{ item.shopify_details.featured_image|e }}" alt="shopify image" loading="lazy" referrerpolicy="no-referrer">
+          {% endif %}
+        </td>
+        <td class="muted">{{ item.sku }}</td>
+        <td>{{ item.name }}</td>
+        <td class="muted">{{ item.brand }}</td>
+        <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+        <td>
+          {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}
+            <a class="btn" href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Mark as Sold</a>
+          {% elif item.status == "SOLD" %}
+            Sold
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p class="muted">No Admin items found.</p>
+{% endif %}
+{% endblock %}

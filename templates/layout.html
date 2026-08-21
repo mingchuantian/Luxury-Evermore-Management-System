@@ -162,8 +162,12 @@
   <nav>
     {% if session.get("user_id") %}
       {% if session.get("role") in ["Management", "Staff"] %}
-        <a href="{{ url_for('outsider_index') }}">Dashboard</a>
-        <a href="{{ url_for('outsider_list_items') }}">Items</a>
+        <a href="{{ url_for('management_index') }}">Dashboard</a>
+        <a href="{{ url_for('management_list_items') }}">Items</a>
+        {% if session.get("role") == "Management" %}
+          <a href="{{ url_for('management_item_new_buyin_form') }}">Add Buy-In</a>
+          <a href="{{ url_for('management_item_new_consignment_form') }}">Add Consignment</a>
+        {% endif %}
         <span class="muted">User: {{ session.get("username") }} ({{ session.get("role") }})</span>
         <a href="{{ url_for('logout') }}">Logout</a>
       {% else %}

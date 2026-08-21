@@ -59,14 +59,13 @@ def create_app():
 
     db = get_db()
     items = db["items"]
-    items_outsider = db["items_outsider"]
     users = db["users"]
     audit_logs = db["audit_logs"]
     notes = db["notes"]
     background_jobs = db["background_jobs"]
-    ensure_indexes(items, items_outsider, users, audit_logs, notes)
+    ensure_indexes(items, users, audit_logs, notes)
 
-    register_all(app, items, items_outsider, users, audit_logs, notes)
+    register_all(app, items, users, audit_logs, notes)
 
     # Must login to browse & operate
     require_login(app, users, idle_minutes=20)

@@ -102,15 +102,17 @@ def require_login(app, users_coll, idle_minutes: int = 20):
             if path.startswith("/analytics") or path.startswith("/audit") or path.startswith("/users"):
                 return "forbidden", 403
 
-            # default landing + keep low-role on outsider UI
+            # Default landing and attempts to enter Admin inventory stay in the
+            # separate Management UI. Its detail route independently enforces
+            # Management ownership, so an Admin SKU still returns 404.
             if path == "/" or path.startswith("/items") or path.startswith("/sales"):
                 # preserve a bit of intent for /items/<key>
                 if path.startswith("/items/") and len(path.split("/")) >= 3:
                     key = path.split("/")[2]
-                    return redirect(url_for("outsider_item_detail", item_key=key))
+                    return redirect(url_for("management_item_detail", item_key=key))
                 if path.startswith("/items"):
-                    return redirect(url_for("outsider_list_items"))
-                return redirect(url_for("outsider_index"))
+                    return redirect(url_for("management_list_items"))
+                return redirect(url_for("management_index"))
 
         _touch_last_seen()
         return None
