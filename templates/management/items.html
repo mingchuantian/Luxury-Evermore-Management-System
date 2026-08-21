@@ -75,6 +75,7 @@
         <td>
           <a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer"><button type="button">Edit</button></a>
           {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}<a href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}"><button type="button">Mark as Sold</button></a>{% endif %}
+          {% if session.get("role") == "Management" and item.status == "SOLD" %}<a href="{{ url_for('management_item_receipt', item_id=item._id|string) }}"><button type="button">Generate Receipt</button></a>{% endif %}
         </td>
       </tr>
     {% endfor %}
@@ -104,6 +105,7 @@
             <a class="btn" href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Mark as Sold</a>
           {% elif item.status == "SOLD" %}
             Sold
+            {% if session.get("role") == "Management" %}<a class="btn" href="{{ url_for('management_item_receipt', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Generate Receipt</a>{% endif %}
           {% else %}
             -
           {% endif %}

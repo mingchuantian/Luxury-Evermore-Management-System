@@ -3,6 +3,7 @@ import re
 
 from bson import ObjectId
 from flask import flash, redirect, render_template, request, send_file, url_for
+from pymongo import DESCENDING
 
 from models import now
 
@@ -154,6 +155,40 @@ def _process_sale(
 
 
 def register(app, items, audit_logs=None):
+    @app.get("/management/items/<item_id>/receipt")
+    @require_roles(ROLE_MANAGEMENT)
+    def management_item_receipt(item_id):
+        oid = _object_id(item_id)
+        item = items.find_one({
+            "_id": oid,
+            "ownership": {"$in": list(MANAGEMENT_SALE_OWNERSHIPS)},
+            "status": "SOLD",
+        }) if oid else None
+        if not item:
+            return "Not found", 404
+
+        # Management-owned sales remain available. Admin-owned sales follow the
+        # same visibility rule as Management Items: latest 50 sales only.
+        if item.get("ownership") == OWNERSHIP_ADMIN:
+            recent_admin_sold_ids = [
+                doc["_id"]
+                for doc in items.find({
+                    "ownership": OWNERSHIP_ADMIN,
+                    "status": "SOLD",
+                }).sort("sold_record.sold_at", DESCENDING).limit(50)
+                if doc.get("_id") is not None
+            ]
+            if oid not in recent_admin_sold_ids:
+                return "Not found", 404
+
+        sold_records = item.get("sold_record") or []
+        if not sold_records:
+            return "No sale record", 400
+        sold = sold_records[-1] or {}
+        sku = (item.get("sku") or "").strip()
+        receipt_number = (sold.get("receipt_no") or "").strip()
+        return _send_receipt(item, sold, receipt_number, sku)
+
     @app.get("/sales/new/<item_id>")
     def sale_new_form(item_id):
         oid = _object_id(item_id)

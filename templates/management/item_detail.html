@@ -12,6 +12,8 @@
 
 {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}
   <p><a class="btn" href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Mark as Sold</a></p>
+{% elif session.get("role") == "Management" and item.status == "SOLD" %}
+  <p><a class="btn" href="{{ url_for('management_item_receipt', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Generate Receipt</a></p>
 {% endif %}
 
 <hr>

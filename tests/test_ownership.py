@@ -3,6 +3,7 @@ import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from bson import ObjectId
 from flask import Flask
@@ -385,6 +386,48 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(sale_result.headers["Location"].endswith("/management/items"))
         self.assertEqual(items.docs[0]["status"], "SOLD")
         self.assertEqual(len(items.docs[0]["sold_record"]), 1)
+
+    def test_management_can_regenerate_receipts_for_visible_sold_items(self):
+        sold_at = datetime(2026, 8, 21, tzinfo=timezone.utc)
+        management_id = ObjectId()
+        admin_id = ObjectId()
+        items = FakeInventory([
+            {
+                "_id": management_id, "sku": "MGMTSLD", "name": "Management Sold",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
+                "created_at": sold_at, "purchase_at": sold_at,
+                "sold_record": [{
+                    "sold_at": sold_at, "sold_price": 1000,
+                    "receipt_no": "M-100", "package_inclusion": "Bag",
+                }],
+            },
+            {
+                "_id": admin_id, "sku": "ADMSOLD", "name": "Admin Sold",
+                "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "created_at": sold_at, "purchase_at": sold_at,
+                "sold_record": [{
+                    "sold_at": sold_at, "sold_price": 2000,
+                    "receipt_no": "A-200", "package_inclusion": "Full set",
+                }],
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client, patch(
+            "luxury_app.routes.sales._send_receipt",
+            return_value=("receipt", 200),
+        ) as send_receipt:
+            self._login(client, ROLE_MANAGEMENT)
+            item_list = client.get("/management/items?status=SOLD")
+            management_receipt = client.get(
+                f"/management/items/{management_id}/receipt"
+            )
+            admin_receipt = client.get(f"/management/items/{admin_id}/receipt")
+
+        self.assertEqual(management_receipt.status_code, 200)
+        self.assertEqual(admin_receipt.status_code, 200)
+        self.assertIn(f"/management/items/{management_id}/receipt".encode(), item_list.data)
+        self.assertIn(f"/management/items/{admin_id}/receipt".encode(), item_list.data)
+        self.assertEqual(send_receipt.call_count, 2)
 
     def test_management_cannot_sell_hidden_admin_status(self):
         item_id = ObjectId()
