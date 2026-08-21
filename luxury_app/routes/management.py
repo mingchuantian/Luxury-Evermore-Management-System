@@ -58,12 +58,9 @@ def register(app, items, audit_logs=None):
         doc["_sold"] = sold_records[-1] if sold_records else {}
         return doc
 
-    def _activity_timestamp(doc):
-        """Sort visible Admin inventory by its latest relevant business event."""
-        value = None
-        if doc.get("status") == "SOLD":
-            value = (doc.get("_sold") or {}).get("sold_at")
-        value = value or doc.get("purchase_at") or doc.get("created_at")
+    def _display_date_timestamp(doc):
+        """Sort by the same value rendered in the Admin Items Date column."""
+        value = doc.get("purchase_at") or doc.get("created_at")
         if isinstance(value, datetime):
             if value.tzinfo is None:
                 value = value.replace(tzinfo=timezone.utc)
@@ -161,7 +158,7 @@ def register(app, items, audit_logs=None):
         admin_items = [
             doc for doc in docs if doc.get("ownership") == OWNERSHIP_ADMIN
         ]
-        admin_items.sort(key=_activity_timestamp, reverse=True)
+        admin_items.sort(key=_display_date_timestamp, reverse=True)
 
         return render_template(
             "management/items.html",

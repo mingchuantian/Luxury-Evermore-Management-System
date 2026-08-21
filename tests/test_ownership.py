@@ -433,8 +433,43 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"SOLD050", response.data)
         self.assertNotIn(b"SOLD000", response.data)
-        self.assertLess(response.data.index(b"SOLD050"), response.data.index(b"SOLD049"))
-        self.assertLess(response.data.index(b"SOLD049"), response.data.index(b"SOLD001"))
+
+    def test_admin_items_are_sorted_by_displayed_date_not_sold_date(self):
+        base_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        items = FakeInventory([
+            {
+                "_id": ObjectId(), "sku": "OLDSOLD", "name": "Old Sold",
+                "brand": "Dior", "ownership": OWNERSHIP_ADMIN,
+                "status": "SOLD", "created_at": base_date,
+                "purchase_at": base_date,
+                "sold_record": [{
+                    "sold_at": base_date + timedelta(days=200),
+                    "sold_price": 1000,
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "MIDSHLF", "name": "Middle Shelf",
+                "brand": "Chanel", "ownership": OWNERSHIP_ADMIN,
+                "status": "ON_SHELF",
+                "created_at": base_date + timedelta(days=60),
+                "purchase_at": base_date + timedelta(days=60),
+            },
+            {
+                "_id": ObjectId(), "sku": "NEWRECV", "name": "New Received",
+                "brand": "Hermes", "ownership": OWNERSHIP_ADMIN,
+                "status": "RECEIVED",
+                "created_at": base_date + timedelta(days=120),
+                "purchase_at": base_date + timedelta(days=120),
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client:
+            self._login(client, ROLE_MANAGEMENT)
+            response = client.get("/management/items")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(response.data.index(b"NEWRECV"), response.data.index(b"MIDSHLF"))
+        self.assertLess(response.data.index(b"MIDSHLF"), response.data.index(b"OLDSOLD"))
 
     def test_management_has_full_edit_fields_for_own_item(self):
         item_id = ObjectId()
