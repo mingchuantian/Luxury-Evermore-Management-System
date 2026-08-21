@@ -56,10 +56,16 @@
         <option value="CONSIGNMENT" {% if source_type=="CONSIGNMENT" %}selected{% endif %}>寄卖</option>
       </select>
     </div>
-    <div style="display:flex; align-items:end;">
-      <button class="btn" type="submit">搜索</button>
+    <div>
+      <label>Ownership 筛选</label>
+      <select name="ownership" onchange="this.form.submit()">
+        <option value="">（全部）</option>
+        <option value="admin" {% if ownership=="admin" %}selected{% endif %}>Admin</option>
+        <option value="management" {% if ownership=="management" %}selected{% endif %}>Management</option>
+      </select>
     </div>
   </div>
+  <p><button class="btn" type="submit">搜索</button></p>
 </form>
 
 <div class="row" style="margin: 10px 0; align-items: center;">
@@ -68,13 +74,13 @@
   </div>
   <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end;">
     {% if page > 1 %}
-      <a class="btn" href="{{ url_for('list_items', page=page-1, q=q, status=status, source_type=source_type) }}">上一页</a>
+      <a class="btn" href="{{ url_for('list_items', page=page-1, q=q, status=status, source_type=source_type, ownership=ownership) }}">上一页</a>
     {% else %}
       <button class="btn" type="button" disabled>上一页</button>
     {% endif %}
 
     {% if page < total_pages %}
-      <a class="btn" href="{{ url_for('list_items', page=page+1, q=q, status=status, source_type=source_type) }}">下一页</a>
+      <a class="btn" href="{{ url_for('list_items', page=page+1, q=q, status=status, source_type=source_type, ownership=ownership) }}">下一页</a>
     {% else %}
       <button class="btn" type="button" disabled>下一页</button>
     {% endif %}

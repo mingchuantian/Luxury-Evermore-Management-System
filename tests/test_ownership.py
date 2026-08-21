@@ -176,6 +176,11 @@ class OwnershipTests(unittest.TestCase):
         items = FakeInventory()
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+
+        @app.get("/login", endpoint="login")
+        def login():
+            return "login"
+
         register_admin_items(app, items)
 
         with app.test_client() as client:
@@ -191,6 +196,39 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(len(items.docs), 1)
         self.assertEqual(items.docs[0]["ownership"], OWNERSHIP_ADMIN)
+
+    def test_admin_items_can_filter_by_ownership(self):
+        created_at = datetime(2026, 8, 21, tzinfo=timezone.utc)
+        items = FakeInventory([
+            {
+                "_id": ObjectId(), "sku": "ADMIN11", "name": "Admin Item",
+                "brand": "Dior", "ownership": OWNERSHIP_ADMIN,
+                "status": "RECEIVED", "source_type": "BUY_IN",
+                "created_at": created_at, "purchase_at": created_at,
+            },
+            {
+                "_id": ObjectId(), "sku": "MGMT011", "name": "Management Item",
+                "brand": "Chanel", "ownership": OWNERSHIP_MANAGEMENT,
+                "status": "RECEIVED", "source_type": "CONSIGNMENT",
+                "created_at": created_at, "purchase_at": created_at,
+            },
+        ])
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+
+        @app.get("/login", endpoint="login")
+        def login():
+            return "login"
+
+        register_admin_items(app, items)
+
+        with app.test_client() as client:
+            response = client.get("/items?ownership=management")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"MGMT011", response.data)
+        self.assertNotIn(b"ADMIN11", response.data)
+        self.assertIn(b'value="management" selected', response.data)
 
     def test_management_add_forms_are_english(self):
         items = FakeInventory()

@@ -14,8 +14,13 @@ from ..audit import (
     make_change_status,
     push_item_audits,
 )
-from ..constants import BRAND_OPTIONS, SELLABLE_STATUSES, STATUS_ZH
-from ..constants import OWNERSHIP_ADMIN
+from ..constants import (
+    BRAND_OPTIONS,
+    OWNERSHIP_ADMIN,
+    SELLABLE_STATUSES,
+    STATUS_ZH,
+    VALID_OWNERSHIPS,
+)
 from ..item_creation import create_item_from_form
 from ..utils import (
     find_date_yyyy_mm_dd_in_text,
@@ -92,6 +97,7 @@ def register(app, items, audit_logs=None):
         q = request.args.get("q", "").strip()
         status = request.args.get("status", "").strip()
         source_type = request.args.get("source_type", "").strip()  # BUY_IN / CONSIGNMENT
+        ownership = request.args.get("ownership", "").strip().lower()
 
         # pagination (cap at 1000 per page)
         try:
@@ -107,6 +113,10 @@ def register(app, items, audit_logs=None):
             filt["status"] = status
         if source_type:
             filt["source_type"] = source_type
+        if ownership in VALID_OWNERSHIPS:
+            filt["ownership"] = ownership
+        elif ownership:
+            ownership = ""
 
         if q:
             q_esc = re.escape(q[:80])
@@ -178,6 +188,7 @@ def register(app, items, audit_logs=None):
             q=q,
             status=status,
             source_type=source_type,
+            ownership=ownership,
             page=page,
             per_page=per_page,
             total=total,
