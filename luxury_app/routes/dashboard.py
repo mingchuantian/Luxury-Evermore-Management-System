@@ -1,11 +1,46 @@
-from flask import render_template, request
+import io
+import json
+import re
+import zipfile
+
+from bson import json_util
+from flask import render_template, request, send_file
 from pymongo import DESCENDING
 
 from models import now
 
+from ..auth import ROLE_ADMIN, require_roles
 from ..constants import STATUS_ZH
 from ..utils import BUSINESS_TZ, MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
 from datetime import timedelta
+
+
+def _build_database_backup(database):
+    """Build a ZIP of BSON-safe Extended JSON files, one per collection."""
+    output = io.BytesIO()
+    manifest = {
+        "database": database.name,
+        "exported_at": now().isoformat(),
+        "format": "MongoDB Extended JSON (PyMongo bson.json_util)",
+        "collections": {},
+    }
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for collection_name in sorted(database.list_collection_names()):
+            if collection_name.startswith("system."):
+                continue
+            documents = list(database[collection_name].find({}))
+            safe_name = re.sub(r"[^0-9A-Za-z._-]+", "_", collection_name)
+            archive.writestr(
+                f"collections/{safe_name}.json",
+                json_util.dumps(documents, ensure_ascii=False, indent=2),
+            )
+            manifest["collections"][collection_name] = len(documents)
+        archive.writestr(
+            "manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+        )
+    output.seek(0)
+    return output
 
 
 def _inventory_value_totals(items):
@@ -124,6 +159,24 @@ def _daily_totals_by_day(items, start_at, end_at):
 
 
 def register(app, items):
+    @app.get("/admin/database-backup")
+    @require_roles(ROLE_ADMIN)
+    def download_database_backup():
+        backup = _build_database_backup(items.database)
+        filename = (
+            "inventory_backup_"
+            + now().astimezone(BUSINESS_TZ).strftime("%Y-%m-%d_%H%M%S")
+            + ".zip"
+        )
+        response = send_file(
+            backup,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=filename,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/")
     def index():
         total = items.count_documents({})

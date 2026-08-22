@@ -1,14 +1,47 @@
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from bson import ObjectId, json_util
+
 from luxury_app.routes.dashboard import (
+    _build_database_backup,
     _daily_totals_by_day,
     _inventory_value_totals,
 )
 
 
 class DashboardAggregationTests(unittest.TestCase):
+    def test_database_backup_preserves_bson_values_as_extended_json(self):
+        item_id = ObjectId()
+        created_at = datetime(2026, 8, 22, tzinfo=timezone.utc)
+        collection = MagicMock()
+        collection.find.return_value = [{
+            "_id": item_id,
+            "sku": "BACKUP1",
+            "created_at": created_at,
+        }]
+        database = MagicMock()
+        database.name = "inventory"
+        database.list_collection_names.return_value = ["items"]
+        database.__getitem__.return_value = collection
+
+        backup = _build_database_backup(database)
+
+        with zipfile.ZipFile(backup) as archive:
+            self.assertEqual(
+                sorted(archive.namelist()),
+                ["collections/items.json", "manifest.json"],
+            )
+            restored = json_util.loads(
+                archive.read("collections/items.json").decode("utf-8")
+            )
+        self.assertEqual(restored[0]["_id"], item_id)
+        # PyMongo's default decoder returns UTC datetimes without tzinfo, just
+        # like ordinary MongoClient reads when tz_aware is not enabled.
+        self.assertEqual(restored[0]["created_at"], created_at.replace(tzinfo=None))
+
     def test_inventory_values_use_requested_buy_in_status_groups(self):
         items = MagicMock()
         items.aggregate.return_value = [{

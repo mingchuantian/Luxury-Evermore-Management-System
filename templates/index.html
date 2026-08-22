@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block content %}
 <h2>仪表盘</h2>
+<p><a class="btn" href="{{ url_for('download_database_backup') }}" style="text-decoration:none; display:inline-block;">备份数据库</a></p>
 <ul>
   <li>总商品数：<b>{{ total }}</b></li>
   <li>库存中（已录入/已到货/上架/预留）：<b>{{ in_stock }}</b></li>
