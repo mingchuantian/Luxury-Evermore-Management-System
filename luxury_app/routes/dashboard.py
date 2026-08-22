@@ -158,6 +158,25 @@ def _daily_totals_by_day(items, start_at, end_at):
     return day_totals
 
 
+def _annual_totals_from_months(profit_map, sales_map, current_year):
+    """Sum monthly currency-specific totals for the current and prior 3 years."""
+    annual = []
+    for year in range(current_year, current_year - 4, -1):
+        prefix = f"{year}-"
+        annual.append({
+            "year": year,
+            "sales_sgd": sum(
+                amount for month, amount in sales_map.items()
+                if month.startswith(prefix)
+            ),
+            "profit_rmb": sum(
+                amount for month, amount in profit_map.items()
+                if month.startswith(prefix)
+            ),
+        })
+    return annual
+
+
 def register(app, items):
     @app.get("/admin/database-backup")
     @require_roles(ROLE_ADMIN)
@@ -227,7 +246,6 @@ def register(app, items):
                 "sold_cnt": {"$sum": 1},
             }},
             {"$sort": {"_id": -1}},
-            {"$limit": 36},
         ]
 
         profit_month_pipeline = [
@@ -242,7 +260,6 @@ def register(app, items):
                 "profit_cnt_rmb": {"$sum": 1},
             }},
             {"$sort": {"_id": -1}},
-            {"$limit": 36},
         ]
 
         sales_month_pipeline = [
@@ -259,7 +276,6 @@ def register(app, items):
                 "sales_sgd": {"$sum": {"$ifNull": ["$last_sale.sold_price", {"$ifNull": ["$listing_price", 0]}]}},
             }},
             {"$sort": {"_id": -1}},
-            {"$limit": 36},
         ]
 
         count_rows = list(items.aggregate(count_month_pipeline))
@@ -271,9 +287,14 @@ def register(app, items):
         profit_cnt_map = {r["_id"]: int(r.get("profit_cnt_rmb", 0) or 0) for r in profit_rows}
         sales_map = {r["_id"]: int(r.get("sales_sgd", 0) or 0) for r in sales_rows}
 
+        current_business_year = now().astimezone(BUSINESS_TZ).year
+        annual = _annual_totals_from_months(
+            profit_map, sales_map, current_business_year
+        )
+
         months = sorted(set(sold_cnt_map.keys()) | set(profit_map.keys()) | set(sales_map.keys()), reverse=True)
         monthly = []
-        for m in months:
+        for m in months[:36]:
             pr = profit_map.get(m, 0)
             pr_cnt = profit_cnt_map.get(m, 0)
             avg_pr = (pr / pr_cnt) if pr_cnt else 0
@@ -341,6 +362,7 @@ def register(app, items):
             sold=sold,
             inventory_values=inventory_values,
             stats=stats,
+            annual=annual,
             STATUS_ZH=STATUS_ZH,
             daily=daily,
             recent_daily=recent_daily,

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from bson import ObjectId, json_util
 
 from luxury_app.routes.dashboard import (
+    _annual_totals_from_months,
     _build_database_backup,
     _daily_totals_by_day,
     _inventory_value_totals,
@@ -13,6 +14,26 @@ from luxury_app.routes.dashboard import (
 
 
 class DashboardAggregationTests(unittest.TestCase):
+    def test_annual_totals_sum_monthly_values_for_four_years(self):
+        annual = _annual_totals_from_months(
+            {
+                "2026-01": 100, "2026-02": 200,
+                "2025-12": 300, "2023-01": 400,
+            },
+            {
+                "2026-01": 1000, "2026-02": 2000,
+                "2024-06": 3000, "2023-01": 4000,
+            },
+            2026,
+        )
+
+        self.assertEqual(annual, [
+            {"year": 2026, "sales_sgd": 3000, "profit_rmb": 300},
+            {"year": 2025, "sales_sgd": 0, "profit_rmb": 300},
+            {"year": 2024, "sales_sgd": 3000, "profit_rmb": 0},
+            {"year": 2023, "sales_sgd": 4000, "profit_rmb": 400},
+        ])
+
     def test_database_backup_preserves_bson_values_as_extended_json(self):
         item_id = ObjectId()
         created_at = datetime(2026, 8, 22, tzinfo=timezone.utc)

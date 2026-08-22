@@ -22,6 +22,12 @@
   <li>成本合计（RMB）：<b>{{ stats.cost_total_rmb }}</b></li>
   <li>利润合计（RMB）：<b>{{ stats.profit_total_rmb }}</b></li>
 </ul>
+{% for year in (annual or []) %}
+  <p>
+    <b>{{ year.year }}</b> 总销售额（SGD）：<b>{{ year.sales_sgd }}</b>
+    ｜ <b>{{ year.year }}</b> 总利润（RMB）：<b>{{ year.profit_rmb }}</b>
+  </p>
+{% endfor %}
 
 <h3>按日统计</h3>
 {% for recent in (recent_daily or []) %}
