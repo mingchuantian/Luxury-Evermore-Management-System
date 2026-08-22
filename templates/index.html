@@ -8,6 +8,13 @@
   <li>已售：<b>{{ sold }}</b></li>
 </ul>
 
+<h3>库存价值</h3>
+<ul>
+  <li>未售出商品总价值：<b>{{ inventory_values.unsold }}</b></li>
+  <li>在护理中商品总价值：<b>{{ inventory_values.caring }}</b></li>
+  <li>已入库未售出商品总价值：<b>{{ inventory_values.received_unsold }}</b></li>
+</ul>
+
 <h3>已售统计</h3>
 <ul>
   <li>销售额合计（SGD）：<b>{{ stats.sales_total_sgd }}</b></li>
@@ -16,6 +23,17 @@
 </ul>
 
 <h3>按日统计</h3>
+{% for recent in (recent_daily or []) %}
+  <div class="row" style="margin: 10px 0;">
+    <div class="msg">
+      <b>{{ recent.day }}</b> 收货成本总计（RMB，仅统计 INBOUND）：<b>{{ recent.purchase_cost_rmb }}</b>
+    </div>
+    <div class="msg">
+      <b>{{ recent.day }}</b> 销售额（SGD）：<b>{{ recent.sales_total_sgd }}</b> ｜ 利润（RMB）：<b>{{ recent.profit_total_rmb }}</b>
+    </div>
+  </div>
+{% endfor %}
+
 <form method="get" action="{{ url_for('index') }}">
   <div class="row">
     <div>

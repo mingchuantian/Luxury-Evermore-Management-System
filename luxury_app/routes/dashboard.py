@@ -4,8 +4,123 @@ from pymongo import DESCENDING
 from models import now
 
 from ..constants import STATUS_ZH
-from ..utils import MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
+from ..utils import BUSINESS_TZ, MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
 from datetime import timedelta
+
+
+def _inventory_value_totals(items):
+    """Return BUY_IN cost totals using the requested MongoDB rules."""
+    rows = list(items.aggregate([{
+        "$facet": {
+            "unsold": [
+                {"$match": {"source_type": "BUY_IN", "status": {"$ne": "SOLD"}}},
+                {"$group": {"_id": None, "total": {"$sum": "$cost"}}},
+            ],
+            "caring": [
+                {"$match": {
+                    "source_type": "BUY_IN",
+                    "status": {"$in": ["INBOUND", "REPARING"]},
+                }},
+                {"$group": {"_id": None, "total": {"$sum": "$cost"}}},
+            ],
+            "received_unsold": [
+                {"$match": {
+                    "source_type": "BUY_IN",
+                    "status": {"$in": ["RECEIVED", "ON_SHELF"]},
+                }},
+                {"$group": {"_id": None, "total": {"$sum": "$cost"}}},
+            ],
+        }
+    }]))
+    payload = rows[0] if rows else {}
+
+    def total(name):
+        values = payload.get(name) or []
+        return int(values[0].get("total", 0) or 0) if values else 0
+
+    return {
+        "unsold": total("unsold"),
+        "caring": total("caring"),
+        "received_unsold": total("received_unsold"),
+    }
+
+
+def _daily_totals_by_day(items, start_at, end_at):
+    """Aggregate daily totals using the existing UTC+8/currency rules."""
+    rows = list(items.aggregate([{
+        "$facet": {
+            "purchase": [
+                {"$match": {"status": "INBOUND"}},
+                {"$addFields": {
+                    "dt": {"$ifNull": ["$purchase_at", "$created_at"]},
+                    "ccy": {"$ifNull": ["$cost_currency", {"$ifNull": ["$currency", ""]}]},
+                    "amount": {"$ifNull": ["$cost", 0]},
+                }},
+                {"$match": {"dt": {"$gte": start_at, "$lt": end_at}, "ccy": "RMB"}},
+                {"$group": {
+                    "_id": {"$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$dt",
+                        "timezone": MONGO_BUSINESS_TIMEZONE,
+                    }},
+                    "total": {"$sum": "$amount"},
+                }},
+            ],
+            "sales": [
+                {"$match": {"status": "SOLD", "sold_record.0": {"$exists": True}}},
+                {"$addFields": {
+                    "last_sale": {"$arrayElemAt": ["$sold_record", -1]},
+                    "sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]},
+                }},
+                {"$match": {"sold_at": {"$gte": start_at, "$lt": end_at}}},
+                {"$addFields": {
+                    "ccy": {"$ifNull": ["$last_sale.sold_currency", {"$ifNull": ["$listing_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}]},
+                    "amount": {"$ifNull": ["$last_sale.sold_price", {"$ifNull": ["$listing_price", 0]}]},
+                }},
+                {"$match": {"ccy": "SGD"}},
+                {"$group": {
+                    "_id": {"$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$sold_at",
+                        "timezone": MONGO_BUSINESS_TIMEZONE,
+                    }},
+                    "total": {"$sum": "$amount"},
+                }},
+            ],
+            "profit": [
+                {"$match": {"status": "SOLD", "sold_record.0": {"$exists": True}}},
+                {"$addFields": {
+                    "sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]},
+                    "ccy": {"$ifNull": ["$profit_currency", {"$ifNull": ["$cost_currency", "$currency"]}]},
+                    "amount": {"$ifNull": ["$profit", 0]},
+                }},
+                {"$match": {
+                    "sold_at": {"$gte": start_at, "$lt": end_at},
+                    "ccy": "RMB",
+                }},
+                {"$group": {
+                    "_id": {"$dateToString": {
+                        "format": "%Y-%m-%d",
+                        "date": "$sold_at",
+                        "timezone": MONGO_BUSINESS_TIMEZONE,
+                    }},
+                    "total": {"$sum": "$amount"},
+                }},
+            ],
+        }
+    }]))
+    payload = rows[0] if rows else {}
+    day_totals = {}
+    for source, target in (
+        ("purchase", "purchase_cost_rmb"),
+        ("sales", "sales_total_sgd"),
+        ("profit", "profit_total_rmb"),
+    ):
+        for row in payload.get(source) or []:
+            day = row.get("_id")
+            if day:
+                day_totals.setdefault(day, {})[target] = int(row.get("total", 0) or 0)
+    return day_totals
 
 
 def register(app, items):
@@ -15,6 +130,7 @@ def register(app, items):
         on_shelf = items.count_documents({"status": "ON_SHELF"})
         in_stock = items.count_documents({"status": {"$in": ["INBOUND", "RECEIVED", "ON_SHELF", "RESERVED", "REPARING"]}})
         sold = items.count_documents({"status": "SOLD"})
+        inventory_values = _inventory_value_totals(items)
 
         # NOTE: do NOT mix currencies. Keep consistent with analytics/monthly tables:
         # - sales_total_sgd: only items where sold_currency (fallback listing/cost currency) == SGD
@@ -116,6 +232,25 @@ def register(app, items):
                 "sales_sgd": sales_map.get(m, 0),
             })
 
+        # --- automatic recent three-day summary in the UTC+8 business timezone ---
+        business_today = now().astimezone(BUSINESS_TZ).date()
+        recent_dates = [business_today - timedelta(days=offset) for offset in range(3)]
+        recent_start = parse_date_yyyy_mm_dd(recent_dates[-1].isoformat())
+        recent_end = parse_date_yyyy_mm_dd(
+            (recent_dates[0] + timedelta(days=1)).isoformat()
+        )
+        recent_totals_map = _daily_totals_by_day(items, recent_start, recent_end)
+        recent_daily = []
+        for business_date in recent_dates:
+            day_label = business_date.isoformat()
+            values = recent_totals_map.get(day_label, {})
+            recent_daily.append({
+                "day": day_label,
+                "purchase_cost_rmb": values.get("purchase_cost_rmb", 0),
+                "sales_total_sgd": values.get("sales_total_sgd", 0),
+                "profit_total_rmb": values.get("profit_total_rmb", 0),
+            })
+
         # --- daily breakdown (similar to searching YYYY-MM-DD in /items) ---
         day_str = (request.args.get("day") or "").strip()
         day_dt0 = parse_date_yyyy_mm_dd(day_str)
@@ -133,48 +268,16 @@ def register(app, items):
                 sr = d.get("sold_record") or []
                 d["_sold"] = sr[-1] if sr else {}
 
-            purchase_cost_rmb = list(items.aggregate([
-                {"$match": {"status": "INBOUND"}},
-                {"$addFields": {
-                    "dt": {"$ifNull": ["$purchase_at", "$created_at"]},
-                    "ccy": {"$ifNull": ["$cost_currency", {"$ifNull": ["$currency", ""]}]},
-                    "cost_num": {"$ifNull": ["$cost", 0]},
-                }},
-                {"$match": {"dt": {"$gte": day_dt0, "$lt": day_dt1}}},
-                {"$match": {"ccy": "RMB"}},
-                {"$group": {"_id": None, "total": {"$sum": "$cost_num"}}},
-            ]))
-            daily_purchase_cost_rmb = int(purchase_cost_rmb[0]["total"]) if purchase_cost_rmb else 0
-
-            sales_sgd = list(items.aggregate([
-                {"$match": {"status": "SOLD", "sold_record.0": {"$exists": True}}},
-                {"$addFields": {
-                    "last_sale": {"$arrayElemAt": ["$sold_record", -1]},
-                    "sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]},
-                }},
-                {"$match": {"sold_at": {"$gte": day_dt0, "$lt": day_dt1}}},
-                {"$addFields": {"sold_ccy": {"$ifNull": ["$last_sale.sold_currency", {"$ifNull": ["$listing_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}]}}},
-                {"$match": {"sold_ccy": "SGD"}},
-                {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$last_sale.sold_price", {"$ifNull": ["$listing_price", 0]}]}}}},
-            ]))
-            daily_sales_total_sgd = int(sales_sgd[0]["total"]) if sales_sgd else 0
-
-            profit_rmb = list(items.aggregate([
-                {"$match": {"status": "SOLD", "sold_record.0": {"$exists": True}}},
-                {"$addFields": {"sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]}}},
-                {"$match": {"sold_at": {"$gte": day_dt0, "$lt": day_dt1}}},
-                {"$addFields": {"profit_ccy": {"$ifNull": ["$profit_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}}},
-                {"$match": {"profit_ccy": "RMB"}},
-                {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$profit", 0]}}}},
-            ]))
-            daily_profit_total_rmb = int(profit_rmb[0]["total"]) if profit_rmb else 0
+            selected_totals = _daily_totals_by_day(items, day_dt0, day_dt1).get(
+                day_str, {}
+            )
 
             daily = {
                 "day": day_str,
                 "items": daily_items,
-                "purchase_cost_rmb": daily_purchase_cost_rmb,
-                "sales_total_sgd": daily_sales_total_sgd,
-                "profit_total_rmb": daily_profit_total_rmb,
+                "purchase_cost_rmb": selected_totals.get("purchase_cost_rmb", 0),
+                "sales_total_sgd": selected_totals.get("sales_total_sgd", 0),
+                "profit_total_rmb": selected_totals.get("profit_total_rmb", 0),
             }
 
         return render_template(
@@ -183,9 +286,11 @@ def register(app, items):
             in_stock=in_stock,
             on_shelf=on_shelf,
             sold=sold,
+            inventory_values=inventory_values,
             stats=stats,
             STATUS_ZH=STATUS_ZH,
             daily=daily,
+            recent_daily=recent_daily,
             monthly=monthly,
         )
 
