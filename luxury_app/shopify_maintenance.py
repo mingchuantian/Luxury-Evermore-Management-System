@@ -491,6 +491,13 @@ JOB_LOCK_ID = "shopify-product-sync"
 INSTANCE_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
 
 
+def _collection_job_lock_id(items_collection: Collection) -> str:
+    collection_name = (getattr(items_collection, "name", "") or "").strip()
+    if not collection_name or collection_name == "items":
+        return JOB_LOCK_ID
+    return f"{JOB_LOCK_ID}:{collection_name}"
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -594,6 +601,7 @@ def _save_shopify_match(
 def _acquire_job_lease(
     job_locks: Optional[Collection],
     interval_hours: float,
+    lock_id: str = JOB_LOCK_ID,
 ) -> bool:
     if job_locks is None:
         return True
@@ -601,7 +609,7 @@ def _acquire_job_lease(
     current_time = _utc_now()
     lease_until = current_time + timedelta(minutes=JOB_LEASE_MINUTES)
     query = {
-        "_id": JOB_LOCK_ID,
+        "_id": lock_id,
         "$and": [
             {
                 "$or": [
@@ -636,11 +644,14 @@ def _acquire_job_lease(
     return bool(result.matched_count or result.upserted_id)
 
 
-def _renew_job_lease(job_locks: Optional[Collection]) -> bool:
+def _renew_job_lease(
+    job_locks: Optional[Collection],
+    lock_id: str = JOB_LOCK_ID,
+) -> bool:
     if job_locks is None:
         return True
     result = job_locks.update_one(
-        {"_id": JOB_LOCK_ID, "owner": INSTANCE_ID},
+        {"_id": lock_id, "owner": INSTANCE_ID},
         {
             "$set": {
                 "lease_until": _utc_now() + timedelta(minutes=JOB_LEASE_MINUTES)
@@ -654,13 +665,14 @@ def _release_job_lease(
     job_locks: Optional[Collection],
     interval_hours: float,
     success: bool,
+    lock_id: str = JOB_LOCK_ID,
 ):
     if job_locks is None:
         return
     current_time = _utc_now()
     retry_delay = interval_hours * 3600 if success else max(60.0, JOB_RETRY_SECONDS)
     job_locks.update_one(
-        {"_id": JOB_LOCK_ID, "owner": INSTANCE_ID},
+        {"_id": lock_id, "owner": INSTANCE_ID},
         {
             "$set": {
                 "lease_until": current_time,
@@ -689,7 +701,8 @@ def run_shopify_maintenance(
     if not SYNC_ENABLED:
         logger.info("Shopify maintenance skipped: SHOPIFY_SYNC_ENABLED is false.")
         return {"skipped": "disabled"}
-    if not _acquire_job_lease(job_locks, interval_hours):
+    lock_id = _collection_job_lock_id(items_collection)
+    if not _acquire_job_lease(job_locks, interval_hours, lock_id):
         return {"skipped": "not_due_or_locked"}
 
     success = False
@@ -799,7 +812,7 @@ def run_shopify_maintenance(
                 time.sleep(SLEEP_SECONDS)
 
             if processed % 50 == 0:
-                if not _renew_job_lease(job_locks):
+                if not _renew_job_lease(job_locks, lock_id):
                     raise RuntimeError("Lost the Shopify maintenance job lease.")
                 logger.info(
                     "Shopify maintenance progress: processed=%s found=%s "
@@ -831,10 +844,10 @@ def run_shopify_maintenance(
             "status_updated": status_updated,
         }
     finally:
-        _release_job_lease(job_locks, interval_hours, success)
+        _release_job_lease(job_locks, interval_hours, success, lock_id)
 
 
-_scheduler_thread = None
+_scheduler_threads = {}
 _scheduler_guard = threading.Lock()
 
 
@@ -849,8 +862,6 @@ def start_shopify_maintenance_scheduler(
     Start a non-blocking scheduler. A MongoDB lease ensures that only one cloud
     worker or app instance performs a due synchronization run.
     """
-    global _scheduler_thread
-
     provider = token_provider or TOKEN_PROVIDER
     config_error = provider.configuration_error()
     if config_error:
@@ -860,9 +871,11 @@ def start_shopify_maintenance_scheduler(
         logger.info("Shopify maintenance scheduler disabled by configuration.")
         return None
 
+    scheduler_key = _collection_job_lock_id(items_collection)
     with _scheduler_guard:
-        if _scheduler_thread is not None and _scheduler_thread.is_alive():
-            return _scheduler_thread
+        current_thread = _scheduler_threads.get(scheduler_key)
+        if current_thread is not None and current_thread.is_alive():
+            return current_thread
 
         def scheduler_loop():
             while True:
@@ -886,15 +899,16 @@ def start_shopify_maintenance_scheduler(
                 )
                 time.sleep(max(10.0, wait_seconds))
 
-        _scheduler_thread = threading.Thread(
+        scheduler_thread = threading.Thread(
             target=scheduler_loop,
             daemon=True,
-            name="ShopifyMaintenance",
+            name=f"ShopifyMaintenance-{scheduler_key}",
         )
-        _scheduler_thread.start()
+        _scheduler_threads[scheduler_key] = scheduler_thread
+        scheduler_thread.start()
         logger.info(
             "Shopify maintenance scheduler started (interval: %s hours, API: %s).",
             interval_hours,
             API_VERSION,
         )
-        return _scheduler_thread
+        return scheduler_thread

@@ -76,6 +76,19 @@ class FakeShopifyItems:
 
 
 class ShopifyAuthenticationTests(unittest.TestCase):
+    def test_items_and_items_view_use_separate_scheduler_locks(self):
+        items = SimpleNamespace(name="items")
+        items_view = SimpleNamespace(name="items_view")
+
+        self.assertEqual(
+            shopify_maintenance._collection_job_lock_id(items),
+            "shopify-product-sync",
+        )
+        self.assertEqual(
+            shopify_maintenance._collection_job_lock_id(items_view),
+            "shopify-product-sync:items_view",
+        )
+
     def test_historical_shopify_link_is_reconciled_to_on_shelf(self):
         items = FakeShopifyItems(
             [

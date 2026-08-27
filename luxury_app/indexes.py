@@ -21,7 +21,7 @@ def _safe_create_index(coll, keys, **kwargs):
         raise
 
 
-def ensure_indexes(items, users, audit_logs, notes):
+def ensure_item_indexes(items):
     _safe_create_index(items, [("created_at", DESCENDING)])
     _safe_create_index(items, [("purchase_at", DESCENDING)])
     _safe_create_index(items, [("status", ASCENDING)])
@@ -36,6 +36,10 @@ def ensure_indexes(items, users, audit_logs, notes):
         ("status", ASCENDING),
         ("sold_record.sold_at", DESCENDING),
     ])
+
+
+def ensure_indexes(items, users, audit_logs, notes):
+    ensure_item_indexes(items)
 
     _safe_create_index(users, [("username", ASCENDING)], unique=True)
 

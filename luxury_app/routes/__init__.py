@@ -9,11 +9,15 @@ from .management import register as register_management
 from .notes import register as register_notes
 
 
-def register_all(app, items, users, audit_logs, notes):
+def register_all(app, items, users, audit_logs, notes, management_items=None):
     register_auth(app, users)
     register_users(app, users)
     register_audit(app, audit_logs)
-    register_management(app, items, audit_logs=audit_logs)
+    register_management(
+        app,
+        management_items if management_items is not None else items,
+        audit_logs=audit_logs,
+    )
     register_dashboard(app, items)
     register_items(app, items, audit_logs=audit_logs)
     register_sales(app, items, audit_logs=audit_logs)

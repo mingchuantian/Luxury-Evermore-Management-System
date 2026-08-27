@@ -9,6 +9,7 @@ from bson import ObjectId
 from flask import Flask
 
 from luxury_app.auth import ROLE_MANAGEMENT, ROLE_STAFF
+from luxury_app.collection_scope import RoleScopedItems
 from luxury_app.constants import OWNERSHIP_ADMIN, OWNERSHIP_MANAGEMENT
 from luxury_app.routes.items import register as register_admin_items
 from luxury_app.routes.management import register as register_management
@@ -247,7 +248,7 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(consignment.status_code, 200)
         self.assertIn(b"Add Consignment", consignment.data)
 
-    def test_staff_cannot_add_items(self):
+    def test_staff_cannot_use_management_collection_routes(self):
         items = FakeInventory()
         app = self._make_app(items)
 
@@ -262,6 +263,58 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(get_response.status_code, 403)
         self.assertEqual(post_response.status_code, 403)
         self.assertEqual(items.docs, [])
+
+    def test_staff_admin_style_creation_writes_only_to_items_view(self):
+        admin_items = FakeInventory()
+        staff_items = FakeInventory()
+        scoped_items = RoleScopedItems(admin_items, staff_items)
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        register_admin_items(app, scoped_items)
+
+        with app.test_client() as client:
+            self._login(client, ROLE_STAFF)
+            response = client.post("/items/new", data=self._payload())
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(admin_items.docs, [])
+        self.assertEqual(len(staff_items.docs), 1)
+        self.assertEqual(staff_items.docs[0]["name"], "Test Bag")
+
+    def test_staff_inventory_list_reads_only_items_view(self):
+        created_at = datetime(2026, 8, 27, tzinfo=timezone.utc)
+        admin_items = FakeInventory([{
+            "_id": ObjectId(), "sku": "ADMIN99", "name": "Admin Secret",
+            "brand": "Dior", "ownership": OWNERSHIP_ADMIN,
+            "status": "RECEIVED", "source_type": "BUY_IN",
+            "created_at": created_at, "purchase_at": created_at,
+        }])
+        staff_items = FakeInventory([{
+            "_id": ObjectId(), "sku": "STAFF99", "name": "Staff Item",
+            "brand": "Chanel", "ownership": OWNERSHIP_ADMIN,
+            "status": "RECEIVED", "source_type": "BUY_IN",
+            "created_at": created_at, "purchase_at": created_at,
+        }])
+        scoped_items = RoleScopedItems(admin_items, staff_items)
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+
+        @app.get("/", endpoint="index")
+        def index():
+            return "dashboard"
+
+        @app.get("/logout", endpoint="logout")
+        def logout():
+            return "logout"
+
+        register_admin_items(app, scoped_items)
+        with app.test_client() as client:
+            self._login(client, ROLE_STAFF)
+            response = client.get("/items")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"STAFF99", response.data)
+        self.assertNotIn(b"ADMIN99", response.data)
 
     def test_management_pages_only_read_management_owned_items(self):
         created_at = datetime(2026, 8, 21, tzinfo=timezone.utc)

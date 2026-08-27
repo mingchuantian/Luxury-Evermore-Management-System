@@ -96,8 +96,8 @@ def require_login(app, users_coll, idle_minutes: int = 20):
         session["username"] = user_doc.get("username", "")
         session["role"] = role
 
-        # Low-role restrictions + routing
-        if role in (ROLE_MANAGEMENT, ROLE_STAFF):
+        # Management stays in its existing, ownership-aware interface.
+        if role == ROLE_MANAGEMENT:
             # hard-disable admin-only pages
             if path.startswith("/analytics") or path.startswith("/audit") or path.startswith("/users"):
                 return "forbidden", 403
@@ -113,6 +113,16 @@ def require_login(app, users_coll, idle_minutes: int = 20):
                 if path.startswith("/items"):
                     return redirect(url_for("management_list_items"))
                 return redirect(url_for("management_index"))
+
+        # Staff reuses the Admin inventory workflow, but RoleScopedItems routes
+        # every read/write to items_view. Other application areas stay closed.
+        if role == ROLE_STAFF:
+            blocked_prefixes = (
+                "/analytics", "/audit", "/users", "/notes",
+                "/management", "/admin",
+            )
+            if path.startswith(blocked_prefixes):
+                return "forbidden", 403
 
         _touch_last_seen()
         return None

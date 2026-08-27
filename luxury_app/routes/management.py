@@ -10,7 +10,7 @@ from pymongo import DESCENDING
 
 from models import now
 
-from ..auth import ROLE_MANAGEMENT, ROLE_STAFF, require_roles
+from ..auth import ROLE_MANAGEMENT, require_roles
 from ..audit import insert_audit_logs, make_change_detail, push_item_audits
 from ..constants import (
     BRAND_OPTIONS,
@@ -68,7 +68,7 @@ def register(app, items, audit_logs=None):
         return 0.0
 
     @app.get("/management")
-    @require_roles(ROLE_MANAGEMENT, ROLE_STAFF)
+    @require_roles(ROLE_MANAGEMENT)
     def management_index():
         recent_admin_sold = _recent_admin_sold_ids()
         received = items.count_documents({
@@ -94,7 +94,7 @@ def register(app, items, audit_logs=None):
         )
 
     @app.get("/management/items")
-    @require_roles(ROLE_MANAGEMENT, ROLE_STAFF)
+    @require_roles(ROLE_MANAGEMENT)
     def management_list_items():
         q = (request.args.get("q") or "").strip()
         status = (request.args.get("status") or "").strip()
@@ -219,7 +219,7 @@ def register(app, items, audit_logs=None):
         return redirect(url_for("management_item_detail", item_key=doc["sku"]))
 
     @app.get("/management/items/<item_key>")
-    @require_roles(ROLE_MANAGEMENT, ROLE_STAFF)
+    @require_roles(ROLE_MANAGEMENT)
     def management_item_detail(item_key):
         item = None
         if _is_object_id(item_key):
@@ -238,7 +238,7 @@ def register(app, items, audit_logs=None):
         )
 
     @app.post("/management/items/<item_id>/update")
-    @require_roles(ROLE_MANAGEMENT, ROLE_STAFF)
+    @require_roles(ROLE_MANAGEMENT)
     def management_item_update(item_id):
         if not _is_object_id(item_id):
             return "invalid id", 400

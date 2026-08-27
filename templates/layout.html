@@ -161,15 +161,20 @@
 <body>
   <nav>
     {% if session.get("user_id") %}
-      {% if session.get("role") in ["Management", "Staff"] %}
+      {% if session.get("role") == "Management" %}
         <a href="{{ url_for('management_index') }}">Dashboard</a>
         <a href="{{ url_for('management_list_items') }}">Items</a>
-        {% if session.get("role") == "Management" %}
-          <a href="{{ url_for('management_item_new_buyin_form') }}">Add Buy-In</a>
-          <a href="{{ url_for('management_item_new_consignment_form') }}">Add Consignment</a>
-        {% endif %}
+        <a href="{{ url_for('management_item_new_buyin_form') }}">Add Buy-In</a>
+        <a href="{{ url_for('management_item_new_consignment_form') }}">Add Consignment</a>
         <span class="muted">User: {{ session.get("username") }} ({{ session.get("role") }})</span>
         <a href="{{ url_for('logout') }}">Logout</a>
+      {% elif session.get("role") == "Staff" %}
+        <a href="{{ url_for('index') }}">仪表盘</a>
+        <a href="{{ url_for('list_items') }}">库存列表</a>
+        <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
+        <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
+        <span class="muted">当前：{{ session.get("username") }}（{{ session.get("role") }}）</span>
+        <a href="{{ url_for('logout') }}">登出</a>
       {% else %}
         <a href="{{ url_for('index') }}">仪表盘</a>
         <a href="{{ url_for('list_items') }}">库存列表</a>

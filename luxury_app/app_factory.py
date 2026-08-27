@@ -7,7 +7,8 @@ from flask import Flask
 from db import get_db
 
 from .auth import require_login
-from .indexes import ensure_indexes
+from .collection_scope import RoleScopedItems
+from .indexes import ensure_indexes, ensure_item_indexes
 from .security import init_csrf
 from .routes import register_all
 from .shopify_maintenance import start_shopify_maintenance_scheduler
@@ -59,13 +60,23 @@ def create_app():
 
     db = get_db()
     items = db["items"]
+    items_view = db["items_view"]
     users = db["users"]
     audit_logs = db["audit_logs"]
     notes = db["notes"]
     background_jobs = db["background_jobs"]
     ensure_indexes(items, users, audit_logs, notes)
+    ensure_item_indexes(items_view)
 
-    register_all(app, items, users, audit_logs, notes)
+    role_scoped_items = RoleScopedItems(items, items_view)
+    register_all(
+        app,
+        role_scoped_items,
+        users,
+        audit_logs,
+        notes,
+        management_items=items,
+    )
 
     # Must login to browse & operate
     require_login(app, users, idle_minutes=20)
@@ -74,6 +85,11 @@ def create_app():
     try:
         start_shopify_maintenance_scheduler(
             items,
+            job_locks=background_jobs,
+            audit_logs=audit_logs,
+        )
+        start_shopify_maintenance_scheduler(
+            items_view,
             job_locks=background_jobs,
             audit_logs=audit_logs,
         )

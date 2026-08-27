@@ -10,7 +10,7 @@ from flask import Flask
 
 import luxury_app.app_factory as app_factory
 import luxury_app.shopify_maintenance as shopify_maintenance
-from luxury_app.auth import ROLE_ADMIN, ROLE_MANAGEMENT, require_login
+from luxury_app.auth import ROLE_ADMIN, ROLE_MANAGEMENT, ROLE_STAFF, require_login
 from luxury_app.routes.sales import register as register_sales
 from luxury_app.utils import parse_date_yyyy_mm_dd
 
@@ -97,6 +97,48 @@ class CoreFixTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             with client.session_transaction() as session:
                 self.assertEqual(session["role"], ROLE_MANAGEMENT)
+
+    def test_staff_can_use_admin_style_inventory_but_not_other_role_areas(self):
+        user_id = ObjectId()
+        users = FakeUsers({
+            "_id": user_id,
+            "username": "staff",
+            "role": ROLE_STAFF,
+        })
+        app = Flask(__name__)
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+
+        @app.get("/login", endpoint="login")
+        def login():
+            return "login"
+
+        @app.get("/items")
+        def items_page():
+            return "staff inventory"
+
+        @app.get("/management")
+        def management_page():
+            return "management"
+
+        @app.get("/notes")
+        def notes_page():
+            return "notes"
+
+        require_login(app, users)
+        with app.test_client() as client:
+            with client.session_transaction() as session:
+                session["user_id"] = str(user_id)
+                session["username"] = "staff"
+                session["role"] = ROLE_STAFF
+                session["last_seen_at"] = datetime.now(timezone.utc).isoformat()
+
+            inventory_response = client.get("/items")
+            management_response = client.get("/management")
+            notes_response = client.get("/notes")
+
+        self.assertEqual(inventory_response.status_code, 200)
+        self.assertEqual(management_response.status_code, 403)
+        self.assertEqual(notes_response.status_code, 403)
 
     def _make_sales_app(self, status="RECEIVED"):
         item_id = ObjectId()
