@@ -33,6 +33,20 @@ class ItemsViewMaintenanceError(RuntimeError):
     pass
 
 
+class TranslationQualityError(ItemsViewMaintenanceError):
+    """The API responded, but the translated name failed local validation."""
+
+
+PERMANENT_QUOTA_CODES = {
+    "credit_balance_exhausted",
+    "insufficient_quota",
+    "billing_hard_limit_reached",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+}
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -97,17 +111,33 @@ def _extract_response_text(payload: Dict[str, Any]) -> str:
 
 def _openai_error(response) -> ItemsViewMaintenanceError:
     detail = ""
+    code = ""
     try:
         payload = response.json()
         error = payload.get("error") or {}
+        code = error.get("code") or ""
         detail = error.get("message") or error.get("code") or ""
     except Exception:
         detail = (response.text or "").strip()
     detail = re.sub(r"\s+", " ", detail)[:500]
     suffix = f": {detail}" if detail else ""
-    return ItemsViewMaintenanceError(
+    result = ItemsViewMaintenanceError(
         f"OpenAI API request failed (HTTP {response.status_code}){suffix}"
     )
+    result.status_code = response.status_code
+    result.error_code = code
+    return result
+
+
+def _retry_delay(response, attempt: int) -> Optional[float]:
+    retry_after = (response.headers.get("Retry-After") or "").strip()
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+            return seconds if 0 <= seconds <= 30 else None
+        except ValueError:
+            pass
+    return min(2 ** attempt + random.random(), 10.0)
 
 
 def translate_product_name(original_name: str) -> str:
@@ -127,35 +157,66 @@ def translate_product_name(original_name: str) -> str:
         "七格对应 Lady Large，四格对应 Lady Small；CF 对应 Classic Flap。"
         "只输出翻译后的英文商品名称，不要解释。"
     )
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "instructions": instructions,
-            "input": original_name,
-            "max_output_tokens": 200,
-            "store": False,
-        },
-        timeout=(10, 60),
-    )
-    if response.status_code >= 400:
-        raise _openai_error(response)
+    last_quality_error = ""
+    for attempt in range(3):
+        retry_instructions = instructions
+        if attempt:
+            retry_instructions += (
+                " 上一次输出未通过校验。重新翻译，并确保输出非空且完全不包含中文字符。"
+            )
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "instructions": retry_instructions,
+                    "input": original_name,
+                    "max_output_tokens": 200,
+                    "store": False,
+                },
+                timeout=(10, 60),
+            )
+        except requests.RequestException as exc:
+            if attempt < 2:
+                time.sleep(min(2 ** attempt + random.random(), 10.0))
+                continue
+            raise ItemsViewMaintenanceError(
+                f"OpenAI API connection failed after 3 attempts: {_safe_error(exc)}"
+            ) from exc
 
-    try:
-        translated = _extract_response_text(response.json())
-    except ValueError as exc:
-        raise ItemsViewMaintenanceError(
-            "OpenAI API returned invalid JSON."
-        ) from exc
-    if not translated or HAN_RE.search(translated):
-        raise ItemsViewMaintenanceError(
+        if response.status_code >= 400:
+            error = _openai_error(response)
+            code = getattr(error, "error_code", "")
+            retryable = (
+                response.status_code >= 500
+                or (response.status_code == 429 and code not in PERMANENT_QUOTA_CODES)
+            )
+            if retryable and attempt < 2:
+                delay = _retry_delay(response, attempt)
+                if delay is not None:
+                    time.sleep(delay)
+                    continue
+            raise error
+
+        try:
+            translated = _extract_response_text(response.json())
+        except ValueError as exc:
+            if attempt < 2:
+                continue
+            raise ItemsViewMaintenanceError(
+                "OpenAI API returned invalid JSON after 3 attempts."
+            ) from exc
+        if translated and not HAN_RE.search(translated):
+            return translated
+        last_quality_error = (
             "OpenAI API returned an empty result or a result that still contains Chinese."
         )
-    return translated
+
+    raise TranslationQualityError(f"{last_quality_error} Retried 3 times.")
 
 
 def _load_seller_names() -> List[str]:
@@ -254,6 +315,7 @@ def maintain_items_view(
         "unchanged": len(source_docs) - len(refreshed_docs),
         "name_translated": 0,
         "name_failed": 0,
+        "translation_fatal": False,
         "translation_error": "",
     }
 
@@ -274,10 +336,19 @@ def maintain_items_view(
                 {"$set": {"name": translated, "changed_name": True}},
             )
             summary["name_translated"] += result.modified_count
+        except TranslationQualityError as exc:
+            # A single difficult name should not fail the whole maintenance run.
+            # It remains unmarked and will be retried on the next run.
+            summary["name_failed"] += 1
+            if not summary["translation_error"]:
+                summary["translation_error"] = _safe_error(exc)
+            if summary["name_failed"] >= 5:
+                break
         except Exception as exc:
-            # Stop after the first API failure. Remaining records keep their
-            # pending flag and can be retried without hammering a broken API.
-            summary["name_failed"] = 1
+            # Authentication, billing and connection failures are systemic;
+            # stop API calls immediately so we do not hammer a broken service.
+            summary["name_failed"] += 1
+            summary["translation_fatal"] = True
             summary["translation_error"] = _safe_error(exc)
             break
 
@@ -388,7 +459,10 @@ def _summary_message(summary: Dict[str, Any]) -> str:
         f"卖家名修改 {summary.get('seller_names_changed', 0)}"
     )
     if summary.get("translation_error"):
-        message += f"；商品名翻译失败：{summary['translation_error']}"
+        message += (
+            f"；商品名待下次重试 {summary.get('name_failed', 0)}："
+            f"{summary['translation_error']}"
+        )
     return message
 
 
@@ -471,9 +545,16 @@ def run_items_view_maintenance(
     try:
         summary = maintain_items_view(items, items_view)
         message = _summary_message(summary)
-        status = "failed" if summary.get("name_failed") else "success"
+        if summary.get("translation_fatal"):
+            status = "failed"
+        elif summary.get("name_failed"):
+            status = "warning"
+        else:
+            status = "success"
         if status == "success":
             logger.info("items_view maintenance completed: %s", message)
+        elif status == "warning":
+            logger.warning("items_view maintenance completed with warnings: %s", message)
         else:
             logger.error("items_view maintenance completed with errors: %s", message)
     except Exception as exc:

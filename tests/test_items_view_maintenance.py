@@ -32,7 +32,33 @@ class FakeLocks:
         return SimpleNamespace(modified_count=1)
 
 
+class FakeOpenAIResponse:
+    def __init__(self, payload, status_code=200, headers=None):
+        self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
 class ItemsViewMaintenanceTests(unittest.TestCase):
+    def test_invalid_translation_output_is_retried_before_succeeding(self):
+        responses = [
+            FakeOpenAIResponse({"output_text": "香奈儿 CF"}),
+            FakeOpenAIResponse({"output_text": ""}),
+            FakeOpenAIResponse({"output_text": "Chanel Classic Flap"}),
+        ]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "luxury_app.items_view_maintenance.requests.post",
+            side_effect=responses,
+        ) as post:
+            translated = maintenance.translate_product_name("香奈儿 CF")
+
+        self.assertEqual(translated, "Chanel Classic Flap")
+        self.assertEqual(post.call_count, 3)
+
     def test_sold_price_maintenance_uses_cost_plus_profit_on_latest_sale(self):
         items_view = MagicMock()
         items_view.update_many.return_value = SimpleNamespace(modified_count=3)
@@ -92,6 +118,31 @@ class ItemsViewMaintenanceTests(unittest.TestCase):
         self.assertEqual(logs.finished["status"], "failed")
         self.assertIsNotNone(logs.finished["finished_at"])
         self.assertIsNotNone(locks.released)
+
+    def test_quality_failure_is_logged_as_partial_completion(self):
+        logs = FakeLogs()
+        locks = FakeLocks()
+        summary = {
+            "name_failed": 1,
+            "translation_fatal": False,
+            "translation_error": "translation validation failed",
+        }
+        with patch.object(
+            maintenance,
+            "maintain_items_view",
+            return_value=summary,
+        ):
+            result = maintenance.run_items_view_maintenance(
+                object(),
+                object(),
+                logs,
+                locks,
+                triggered_by="scheduled",
+                acquired_owner="owner-1",
+            )
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(logs.finished["status"], "warning")
 
     def test_safe_error_scrubs_database_credentials_and_api_keys(self):
         error = RuntimeError(
