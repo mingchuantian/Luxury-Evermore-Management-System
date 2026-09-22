@@ -49,7 +49,9 @@ def build_consignment_agreement_mapping(item: Dict[str, Any]) -> Dict[str, str]:
         "[AGREEMENT NUMBER]": (item.get("sku") or "").strip(),
         "[DD MMM YYYY]": _date_in_utc8(item.get("purchase_at") or item.get("created_at")),
         "[CONSIGNOR NAME]": (item.get("seller_name") or "").strip(),
-        "[ITEM NAME AND DESCRIPTION]": (item.get("name_in_EN") or "").strip(),
+        "[ITEM NAME AND DESCRIPTION]": (
+            item.get("name_in_EN") or item.get("name") or ""
+        ).strip(),
         "SGD $[TARGET PAYOUT]": _target_payout(item),
         "[OPTIONAL NOTE]": (
             (item.get("additional_notes_for_agreements") or "").strip() or "N.A."
@@ -85,4 +87,3 @@ def generate_consignment_agreement_docx_bytes(*, item: Dict[str, Any]) -> BytesI
 
     output.seek(0)
     return output
-

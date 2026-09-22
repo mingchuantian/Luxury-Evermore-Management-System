@@ -9,7 +9,7 @@ from pymongo import DESCENDING
 
 from models import now
 
-from ..auth import ROLE_ADMIN, require_roles
+from ..auth import ROLE_ADMIN, ROLE_STAFF, require_roles
 from ..constants import STATUS_ZH
 from ..items_view_maintenance import trigger_items_view_maintenance
 from ..utils import BUSINESS_TZ, MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
@@ -81,7 +81,7 @@ def _inventory_value_totals(items):
     }
 
 
-def _daily_totals_by_day(items, start_at, end_at):
+def _daily_totals_by_day(items, start_at, end_at, profit_currency="RMB"):
     """Aggregate daily totals using the existing UTC+8/currency rules."""
     rows = list(items.aggregate([{
         "$facet": {
@@ -132,7 +132,7 @@ def _daily_totals_by_day(items, start_at, end_at):
                 }},
                 {"$match": {
                     "sold_at": {"$gte": start_at, "$lt": end_at},
-                    "ccy": "RMB",
+                    "ccy": profit_currency,
                 }},
                 {"$group": {
                     "_id": {"$dateToString": {
@@ -157,6 +157,10 @@ def _daily_totals_by_day(items, start_at, end_at):
             if day:
                 day_totals.setdefault(day, {})[target] = int(row.get("total", 0) or 0)
     return day_totals
+
+
+def _profit_currency_for_role(role):
+    return "SGD" if role == ROLE_STAFF else "RMB"
 
 
 def _annual_totals_from_months(profit_map, sales_map, current_year):
@@ -236,6 +240,7 @@ def register(
 
     @app.get("/")
     def index():
+        profit_currency = _profit_currency_for_role(session.get("role"))
         total = items.count_documents({})
         on_shelf = items.count_documents({"status": "ON_SHELF"})
         in_stock = items.count_documents({"status": {"$in": ["INBOUND", "RECEIVED", "ON_SHELF", "RESERVED", "REPARING"]}})
@@ -254,7 +259,7 @@ def register(
 
         # NOTE: do NOT mix currencies. Keep consistent with analytics/monthly tables:
         # - sales_total_sgd: only items where sold_currency (fallback listing/cost currency) == SGD
-        # - profit_total_rmb: only items where profit_currency (fallback cost_currency) == RMB
+        # - profit: Staff/items_view uses SGD; Admin/items continues to use RMB
         # - cost_total_rmb: only items where cost_currency == RMB
         pipeline = [
             {"$match": {"status": "SOLD", "sold_record.0": {"$exists": True}}},
@@ -275,7 +280,7 @@ def register(
                 "_id": None,
                 "sold_cnt": {"$sum": 1},
                 "sales_total_sgd": {"$sum": {"$cond": [{"$eq": ["$sold_ccy", "SGD"]}, "$sold_price_num", 0]}},
-                "profit_total_rmb": {"$sum": {"$cond": [{"$eq": ["$profit_ccy", "RMB"]}, "$profit_num", 0]}},
+                "profit_total_rmb": {"$sum": {"$cond": [{"$eq": ["$profit_ccy", profit_currency]}, "$profit_num", 0]}},
                 "cost_total_rmb": {"$sum": {"$cond": [{"$eq": ["$cost_ccy", "RMB"]}, "$cost_num", 0]}},
             }}
         ]
@@ -301,7 +306,7 @@ def register(
             {"$addFields": {"sold_at": {"$arrayElemAt": ["$sold_record.sold_at", -1]}}},
             {"$match": {"sold_at": {"$ne": None}}},
             {"$addFields": {"profit_ccy": {"$ifNull": ["$profit_currency", {"$ifNull": ["$cost_currency", "$currency"]}]}}},
-            {"$match": {"profit_ccy": "RMB"}},
+            {"$match": {"profit_ccy": profit_currency}},
             {"$group": {
                 "_id": {"$dateToString": {"format": "%Y-%m", "date": "$sold_at", "timezone": MONGO_BUSINESS_TIMEZONE}},
                 "profit_rmb": {"$sum": {"$ifNull": ["$profit", 0]}},
@@ -361,7 +366,12 @@ def register(
         recent_end = parse_date_yyyy_mm_dd(
             (recent_dates[0] + timedelta(days=1)).isoformat()
         )
-        recent_totals_map = _daily_totals_by_day(items, recent_start, recent_end)
+        recent_totals_map = _daily_totals_by_day(
+            items,
+            recent_start,
+            recent_end,
+            profit_currency=profit_currency,
+        )
         recent_daily = []
         for business_date in recent_dates:
             day_label = business_date.isoformat()
@@ -390,9 +400,12 @@ def register(
                 sr = d.get("sold_record") or []
                 d["_sold"] = sr[-1] if sr else {}
 
-            selected_totals = _daily_totals_by_day(items, day_dt0, day_dt1).get(
-                day_str, {}
-            )
+            selected_totals = _daily_totals_by_day(
+                items,
+                day_dt0,
+                day_dt1,
+                profit_currency=profit_currency,
+            ).get(day_str, {})
 
             daily = {
                 "day": day_str,
@@ -415,6 +428,7 @@ def register(
             daily=daily,
             recent_daily=recent_daily,
             monthly=monthly,
+            profit_currency=profit_currency,
             maintenance_history=maintenance_history,
         )
 

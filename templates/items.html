@@ -11,7 +11,7 @@
   tr.status-RESERVED  td { background: #fff7e6; }
   tr.status-REPARING  td { background: #f4efff; }
   /* SOLD: light green */
-  tr.status-SOLD      td { background: #eefaf3; }
+  tr.status-SOLD      td { background: #dcefe2; }
   tr.status-MISSING   td { background: #fff1ea; }
   tr.status-DAMAGED   td { background: #ffeef0; }
   tr.status-RETURNED  td { background: #eefbf8; }
@@ -90,7 +90,9 @@
 <table>
   <tr>
     <th>收货/寄卖日期</th><th class="col-img">图片</th><th>SKU</th><th>品牌 和 名称</th><th>编码</th><th>类型</th>
-    <th>卖家/寄卖人</th><th>备注</th><th>成本</th><th>售价</th><th>状态</th><th>操作</th>
+    <th>卖家/寄卖人</th><th>备注</th><th>成本</th>
+    {% if session.get("role") != "Staff" %}<th>售价</th>{% endif %}
+    <th>状态</th><th>操作</th>
   </tr>
   {% for it in items %}
   <tr class="status-{{ it.status }}{% if it.status == 'SOLD' and (it.get('profit') is none or it.get('profit', 0) == 0) %} profit-missing{% endif %}">
@@ -129,13 +131,15 @@
     <td class="muted">{{ it.seller_name }}</td>
     <td class="muted">{{ it.note }}</td>
     <td>{{ it.cost }} ({{ it.cost_currency or it.currency or "SGD" }})</td>
-    <td>
-      {% if it.status == "SOLD" %}
-        {{ it._sold.sold_price or 0 }}
-      {% else %}
-        {{ it.listing_price or 0 }}
-      {% endif %}
-    </td>
+    {% if session.get("role") != "Staff" %}
+      <td>
+        {% if it.status == "SOLD" %}
+          {{ it._sold.sold_price or 0 }}
+        {% else %}
+          {{ it.listing_price or 0 }}
+        {% endif %}
+      </td>
+    {% endif %}
     <td>
       {% if it.status == "SOLD" and it._sold.sold_at %}
         {{ STATUS_ZH.get(it.status, it.status) }} ({{ it._sold.sold_at.strftime("%Y-%m-%d") }})

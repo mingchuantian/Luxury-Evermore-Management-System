@@ -1,7 +1,7 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from flask import Flask
 
@@ -33,6 +33,23 @@ class FakeLocks:
 
 
 class ItemsViewMaintenanceTests(unittest.TestCase):
+    def test_sold_price_maintenance_uses_cost_plus_profit_on_latest_sale(self):
+        items_view = MagicMock()
+        items_view.update_many.return_value = SimpleNamespace(modified_count=3)
+
+        changed = maintenance._update_sold_prices(items_view)
+
+        self.assertEqual(changed, 3)
+        query, pipeline = items_view.update_many.call_args.args
+        self.assertEqual(query["status"], "SOLD")
+        self.assertEqual(query["changed_sold_price"], {"$ne": True})
+        set_fields = pipeline[0]["$set"]
+        self.assertTrue(set_fields["changed_sold_price"])
+        latest_updates = set_fields["sold_record"]["$concatArrays"][1][0]
+        replacement = latest_updates["$mergeObjects"][1]
+        self.assertEqual(replacement["sold_price"], {"$add": ["$cost", "$profit"]})
+        self.assertEqual(replacement["sold_currency"], "SGD")
+
     def test_extracts_text_from_raw_responses_api_payload(self):
         payload = {
             "output": [{

@@ -10,10 +10,16 @@ from luxury_app.routes.dashboard import (
     _build_database_backup,
     _daily_totals_by_day,
     _inventory_value_totals,
+    _profit_currency_for_role,
 )
+from luxury_app.auth import ROLE_ADMIN, ROLE_STAFF
 
 
 class DashboardAggregationTests(unittest.TestCase):
+    def test_staff_profit_uses_sgd_while_admin_remains_rmb(self):
+        self.assertEqual(_profit_currency_for_role(ROLE_STAFF), "SGD")
+        self.assertEqual(_profit_currency_for_role(ROLE_ADMIN), "RMB")
+
     def test_annual_totals_sum_monthly_values_for_four_years(self):
         annual = _annual_totals_from_months(
             {
@@ -117,6 +123,23 @@ class DashboardAggregationTests(unittest.TestCase):
             purchase_group["_id"]["$dateToString"]["timezone"],
             "+08:00",
         )
+
+    def test_daily_staff_profit_pipeline_matches_sgd(self):
+        items = MagicMock()
+        items.aggregate.return_value = []
+        start_at = datetime(2026, 8, 21, 16, tzinfo=timezone.utc)
+        end_at = datetime(2026, 8, 22, 16, tzinfo=timezone.utc)
+
+        _daily_totals_by_day(
+            items,
+            start_at,
+            end_at,
+            profit_currency="SGD",
+        )
+
+        pipeline = items.aggregate.call_args.args[0]
+        profit_steps = pipeline[0]["$facet"]["profit"]
+        self.assertEqual(profit_steps[2]["$match"]["ccy"], "SGD")
 
 
 if __name__ == "__main__":

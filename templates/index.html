@@ -22,12 +22,12 @@
 <ul>
   <li>销售额合计（SGD）：<b>{{ stats.sales_total_sgd }}</b></li>
   <li>成本合计（RMB）：<b>{{ stats.cost_total_rmb }}</b></li>
-  <li>利润合计（RMB）：<b>{{ stats.profit_total_rmb }}</b></li>
+  <li>利润合计（{{ profit_currency }}）：<b>{{ stats.profit_total_rmb }}</b></li>
 </ul>
 {% for year in (annual or []) %}
   <p>
     <b>{{ year.year }}</b> 总销售额（SGD）：<b>{{ year.sales_sgd }}</b>
-    ｜ <b>{{ year.year }}</b> 总利润（RMB）：<b>{{ year.profit_rmb }}</b>
+    ｜ <b>{{ year.year }}</b> 总利润（{{ profit_currency }}）：<b>{{ year.profit_rmb }}</b>
   </p>
 {% endfor %}
 
@@ -38,7 +38,7 @@
       <b>{{ recent.day }}</b> 收货成本总计（RMB，仅统计 INBOUND）：<b>{{ recent.purchase_cost_rmb }}</b>
     </div>
     <div class="msg">
-      <b>{{ recent.day }}</b> 销售额（SGD）：<b>{{ recent.sales_total_sgd }}</b> ｜ 利润（RMB）：<b>{{ recent.profit_total_rmb }}</b>
+      <b>{{ recent.day }}</b> 销售额（SGD）：<b>{{ recent.sales_total_sgd }}</b> ｜ 利润（{{ profit_currency }}）：<b>{{ recent.profit_total_rmb }}</b>
     </div>
   </div>
 {% endfor %}
@@ -61,7 +61,7 @@
       <b>{{ daily.day }}</b> 当日收货成本总计（RMB，仅统计 INBOUND）：<b>{{ daily.purchase_cost_rmb }}</b>
     </div>
     <div class="msg">
-      <b>{{ daily.day }}</b> 当日销售额（SGD，仅统计 SOLD）：<b>{{ daily.sales_total_sgd }}</b> ｜ 当日利润（RMB，仅统计 SOLD）：<b>{{ daily.profit_total_rmb }}</b>
+      <b>{{ daily.day }}</b> 当日销售额（SGD，仅统计 SOLD）：<b>{{ daily.sales_total_sgd }}</b> ｜ 当日利润（{{ profit_currency }}，仅统计 SOLD）：<b>{{ daily.profit_total_rmb }}</b>
     </div>
   </div>
 
@@ -72,7 +72,7 @@
     tr.status-ON_SHELF  td { background: #eefaf3; }
     tr.status-RESERVED  td { background: #fff7e6; }
     tr.status-REPARING  td { background: #f4efff; }
-    tr.status-SOLD      td { background: #eefaf3; }
+    tr.status-SOLD      td { background: #dcefe2; }
     tr.status-MISSING   td { background: #fff1ea; }
     tr.status-DAMAGED   td { background: #ffeef0; }
     tr.status-RETURNED  td { background: #eefbf8; }
@@ -131,13 +131,13 @@
 {% endif %}
 
 <h3>按月统计</h3>
-<p class="muted">利润仅统计 RMB；销售额仅统计 SGD（未做跨币种换算）。</p>
+<p class="muted">利润仅统计 {{ profit_currency }}；销售额仅统计 SGD（未做跨币种换算）。</p>
 <table>
   <tr>
     <th>月份</th>
     <th>销售件数</th>
-    <th>利润（RMB）</th>
-    <th>平均单件利润（RMB）</th>
+    <th>利润（{{ profit_currency }}）</th>
+    <th>平均单件利润（{{ profit_currency }}）</th>
     <th>销售额（SGD）</th>
   </tr>
   {% for r in (monthly or []) %}
@@ -156,7 +156,7 @@
   <h3>items_view 每日维护</h3>
   <p class="muted">系统每天自动运行一次。维护失败不会影响 Web App，可在修复问题后手动重试。</p>
   <form method="post" action="{{ url_for('run_items_view_maintenance_now') }}" style="margin-bottom: 14px;">
-    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <button class="btn" type="submit">立刻维护</button>
   </form>
 

@@ -177,6 +177,38 @@ def _load_seller_names() -> List[str]:
     return names
 
 
+def _update_sold_prices(items_view) -> int:
+    """Set the latest sale to cost + profit once for each maintained SOLD item."""
+    result = items_view.update_many(
+        {
+            "status": "SOLD",
+            "changed_sold_price": {"$ne": True},
+            "sold_record.0": {"$exists": True},
+            "$expr": {"$and": [
+                {"$isNumber": "$cost"},
+                {"$isNumber": "$profit"},
+            ]},
+        },
+        [{"$set": {
+            "sold_record": {"$concatArrays": [
+                {"$slice": [
+                    "$sold_record",
+                    {"$subtract": [{"$size": "$sold_record"}, 1]},
+                ]},
+                [{"$mergeObjects": [
+                    {"$arrayElemAt": ["$sold_record", -1]},
+                    {
+                        "sold_price": {"$add": ["$cost", "$profit"]},
+                        "sold_currency": "SGD",
+                    },
+                ]}],
+            ]},
+            "changed_sold_price": True,
+        }}],
+    )
+    return result.modified_count
+
+
 def maintain_items_view(
     items,
     items_view,
@@ -298,6 +330,7 @@ def maintain_items_view(
         items_view.bulk_write(profit_ops, ordered=False)
         if profit_ops else None
     )
+    sold_prices_changed = _update_sold_prices(items_view)
     note = items_view.update_many(
         {"changed_note": {"$ne": True}},
         {"$set": {"note": "", "changed_note": True}},
@@ -334,6 +367,7 @@ def maintain_items_view(
         "converted_to_consignment": consign.modified_count,
         "cost_converted": cost.modified_count,
         "profit_recalculated": profit_result.modified_count if profit_result else 0,
+        "sold_prices_changed": sold_prices_changed,
         "notes_cleared": note.modified_count,
         "seller_names_changed": seller_result.modified_count if seller_result else 0,
     })
@@ -349,6 +383,7 @@ def _summary_message(summary: Dict[str, Any]) -> str:
         f"转寄售 {summary.get('converted_to_consignment', 0)}；"
         f"成本转换 {summary.get('cost_converted', 0)}；"
         f"利润重算 {summary.get('profit_recalculated', 0)}；"
+        f"售价重算 {summary.get('sold_prices_changed', 0)}；"
         f"清空备注 {summary.get('notes_cleared', 0)}；"
         f"卖家名修改 {summary.get('seller_names_changed', 0)}"
     )

@@ -68,6 +68,15 @@ class ConsignmentAgreementTests(unittest.TestCase):
         self.assertIn("RMB 8,800", xml)
         self.assertNotIn("SGD $[TARGET PAYOUT]", xml)
 
+    def test_item_description_falls_back_to_the_product_name(self):
+        generated = generate_consignment_agreement_docx_bytes(
+            item={"name": "Dior D-Joy Medium", "name_in_EN": ""}
+        )
+        with ZipFile(generated, "r") as result:
+            xml = result.read(DOCUMENT_PART).decode("utf-8")
+        self.assertIn("Dior D-Joy Medium", xml)
+        self.assertNotIn("[ITEM NAME AND DESCRIPTION]", xml)
+
     def test_existing_button_endpoint_downloads_the_new_word_agreement(self):
         item_id = ObjectId()
         items = FakeItems(
