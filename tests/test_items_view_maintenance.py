@@ -8,7 +8,6 @@ from flask import Flask
 from luxury_app import items_view_maintenance as maintenance
 from luxury_app.auth import ROLE_ADMIN, ROLE_STAFF
 from luxury_app.routes.dashboard import register as register_dashboard
-from fix_items_view_negative_profits import fix_negative_profits
 
 
 class FakeLogs:
@@ -45,26 +44,12 @@ class FakeOpenAIResponse:
 
 
 class ItemsViewMaintenanceTests(unittest.TestCase):
-    def test_new_profit_is_always_positive(self):
+    def test_sold_cost_is_derived_from_sale_price(self):
         with patch(
             "luxury_app.items_view_maintenance.random.randint",
             return_value=12,
         ):
-            self.assertEqual(maintenance._positive_profit(1000), 120)
-
-    def test_correction_script_only_updates_negative_profit(self):
-        items_view = MagicMock()
-        items_view.update_many.return_value = SimpleNamespace(modified_count=7)
-
-        changed = fix_negative_profits(items_view)
-
-        self.assertEqual(changed, 7)
-        query, pipeline = items_view.update_many.call_args.args
-        self.assertEqual(query["status"], "SOLD")
-        self.assertEqual(
-            pipeline,
-            [{"$set": {"profit": {"$abs": "$profit"}}}],
-        )
+            self.assertEqual(maintenance._cost_from_sold_price(1120), 1000)
 
     def test_invalid_translation_output_is_retried_before_succeeding(self):
         responses = [
@@ -81,22 +66,38 @@ class ItemsViewMaintenanceTests(unittest.TestCase):
         self.assertEqual(translated, "Chanel Classic Flap")
         self.assertEqual(post.call_count, 3)
 
-    def test_sold_price_maintenance_uses_cost_plus_profit_on_latest_sale(self):
+    def test_sold_maintenance_restores_source_price_and_sets_cost(self):
         items_view = MagicMock()
-        items_view.update_many.return_value = SimpleNamespace(modified_count=3)
+        items_view.find.return_value = [{
+            "_id": "item-1",
+            "sold_record": [{"sold_price": 1}],
+        }]
+        items_view.bulk_write.side_effect = [
+            SimpleNamespace(modified_count=1),
+            SimpleNamespace(modified_count=1),
+        ]
+        source_docs = [{
+            "_id": "item-1",
+            "status": "SOLD",
+            "sold_record": [{"sold_price": 1120, "sold_currency": "SGD"}],
+        }]
 
-        changed = maintenance._update_sold_prices(items_view)
+        with patch(
+            "luxury_app.items_view_maintenance.random.randint",
+            return_value=12,
+        ):
+            changed = maintenance._sync_sold_financials(
+                items_view, source_docs
+            )
 
-        self.assertEqual(changed, 3)
-        query, pipeline = items_view.update_many.call_args.args
-        self.assertEqual(query["status"], "SOLD")
-        self.assertEqual(query["changed_sold_price"], {"$ne": True})
-        set_fields = pipeline[0]["$set"]
-        self.assertTrue(set_fields["changed_sold_price"])
-        latest_updates = set_fields["sold_record"]["$concatArrays"][1][0]
-        replacement = latest_updates["$mergeObjects"][1]
-        self.assertEqual(replacement["sold_price"], {"$add": ["$cost", "$profit"]})
-        self.assertEqual(replacement["sold_currency"], "SGD")
+        self.assertEqual(changed["sold_prices_restored"], 1)
+        self.assertEqual(changed["sold_costs_recalculated"], 1)
+        price_op = items_view.bulk_write.call_args_list[0].args[0][0]
+        cost_op = items_view.bulk_write.call_args_list[1].args[0][0]
+        self.assertEqual(price_op._doc["$set"]["sold_record.0.sold_price"], 1120)
+        self.assertEqual(cost_op._doc["$set"]["cost"], 1000)
+        self.assertTrue(cost_op._doc["$set"]["changed_cost"])
+        self.assertNotIn("profit", cost_op._doc["$set"])
 
     def test_extracts_text_from_raw_responses_api_payload(self):
         payload = {

@@ -238,41 +238,74 @@ def _load_seller_names() -> List[str]:
     return names
 
 
-def _update_sold_prices(items_view) -> int:
-    """Set the latest sale to cost + profit once for each maintained SOLD item."""
-    result = items_view.update_many(
-        {
-            "status": "SOLD",
-            "changed_sold_price": {"$ne": True},
-            "sold_record.0": {"$exists": True},
-            "$expr": {"$and": [
-                {"$isNumber": "$cost"},
-                {"$isNumber": "$profit"},
-            ]},
-        },
-        [{"$set": {
-            "sold_record": {"$concatArrays": [
-                {"$slice": [
-                    "$sold_record",
-                    {"$subtract": [{"$size": "$sold_record"}, 1]},
-                ]},
-                [{"$mergeObjects": [
-                    {"$arrayElemAt": ["$sold_record", -1]},
-                    {
-                        "sold_price": {"$add": ["$cost", "$profit"]},
-                        "sold_currency": "SGD",
-                    },
-                ]}],
-            ]},
-            "changed_sold_price": True,
-        }}],
-    )
-    return result.modified_count
-
-
-def _positive_profit(cost: int) -> int:
+def _cost_from_sold_price(sold_price: int) -> int:
     rate = random.randint(8, 15) / 100
-    return round(cost * rate)
+    return round(sold_price / (1 + rate))
+
+
+def _sync_sold_financials(items_view, source_docs) -> Dict[str, int]:
+    """Restore source sale prices and derive pending SOLD costs from them."""
+    sold_sources = {
+        doc["_id"]: doc
+        for doc in source_docs
+        if doc.get("status") == "SOLD"
+    }
+    if not sold_sources:
+        return {"sold_prices_restored": 0, "sold_costs_recalculated": 0}
+
+    view_docs = {
+        doc["_id"]: doc
+        for doc in items_view.find(
+            {"_id": {"$in": list(sold_sources)}},
+            {"sold_record": 1, "changed_cost": 1},
+        )
+    }
+    price_ops = []
+    cost_ops = []
+    for item_id, source in sold_sources.items():
+        view = view_docs.get(item_id)
+        source_sales = source.get("sold_record") or []
+        view_sales = (view or {}).get("sold_record") or []
+        if not view or not source_sales or not view_sales:
+            continue
+        sold_price = source_sales[-1].get("sold_price")
+        if isinstance(sold_price, bool) or not isinstance(sold_price, (int, float)):
+            continue
+        price_path = f"sold_record.{len(view_sales) - 1}.sold_price"
+        price_ops.append(UpdateOne(
+            {"_id": item_id, "status": "SOLD"},
+            {"$set": {price_path: sold_price}},
+        ))
+        if view.get("changed_cost") is not True:
+            cost_ops.append(UpdateOne(
+                {
+                    "_id": item_id,
+                    "status": "SOLD",
+                    "changed_cost": {"$ne": True},
+                },
+                {"$set": {
+                    "cost": _cost_from_sold_price(sold_price),
+                    "cost_currency": source_sales[-1].get(
+                        "sold_currency", "SGD"
+                    ),
+                    "changed_cost": True,
+                }},
+            ))
+
+    price_result = (
+        items_view.bulk_write(price_ops, ordered=False) if price_ops else None
+    )
+    cost_result = (
+        items_view.bulk_write(cost_ops, ordered=False) if cost_ops else None
+    )
+    return {
+        "sold_prices_restored": (
+            price_result.modified_count if price_result else 0
+        ),
+        "sold_costs_recalculated": (
+            cost_result.modified_count if cost_result else 0
+        ),
+    }
 
 
 def maintain_items_view(
@@ -367,45 +400,19 @@ def maintain_items_view(
         }},
     )
     cost = items_view.update_many(
-        {"changed_cost": {"$ne": True}, "$expr": {"$isNumber": "$cost"}},
+        {
+            "status": {"$ne": "SOLD"},
+            "changed_cost": {"$ne": True},
+            "$expr": {"$isNumber": "$cost"},
+        },
         [{"$set": {
             "cost": {"$toLong": {"$round": [{"$divide": ["$cost", 5.3]}, 0]}},
             "cost_currency": "SGD",
             "changed_cost": True,
         }}],
     )
-
-    profit_docs = list(items_view.find(
-        {
-            "status": "SOLD",
-            "changed_profit": {"$ne": True},
-            "$expr": {"$and": [
-                {"$isNumber": "$cost"},
-                {"$isNumber": "$profit"},
-            ]},
-        },
-        {"cost": 1},
-    ))
-    profit_ops = []
-    for doc in profit_docs:
-        profit_value = _positive_profit(doc["cost"])
-        profit_ops.append(UpdateOne(
-            {
-                "_id": doc["_id"],
-                "status": "SOLD",
-                "changed_profit": {"$ne": True},
-            },
-            {"$set": {
-                "profit": profit_value,
-                "profit_currency": "SGD",
-                "changed_profit": True,
-            }},
-        ))
-    profit_result = (
-        items_view.bulk_write(profit_ops, ordered=False)
-        if profit_ops else None
-    )
-    sold_prices_changed = _update_sold_prices(items_view)
+    sold_financials = _sync_sold_financials(items_view, source_docs)
+    items_view.update_many({}, {"$unset": {"changed_sold_price": ""}})
     note = items_view.update_many(
         {"changed_note": {"$ne": True}},
         {"$set": {"note": "", "changed_note": True}},
@@ -441,8 +448,7 @@ def maintain_items_view(
     summary.update({
         "converted_to_consignment": consign.modified_count,
         "cost_converted": cost.modified_count,
-        "profit_recalculated": profit_result.modified_count if profit_result else 0,
-        "sold_prices_changed": sold_prices_changed,
+        **sold_financials,
         "notes_cleared": note.modified_count,
         "seller_names_changed": seller_result.modified_count if seller_result else 0,
     })
@@ -457,8 +463,8 @@ def _summary_message(summary: Dict[str, Any]) -> str:
         f"商品名翻译 {summary.get('name_translated', 0)}；"
         f"转寄售 {summary.get('converted_to_consignment', 0)}；"
         f"成本转换 {summary.get('cost_converted', 0)}；"
-        f"利润重算 {summary.get('profit_recalculated', 0)}；"
-        f"售价重算 {summary.get('sold_prices_changed', 0)}；"
+        f"成交价恢复 {summary.get('sold_prices_restored', 0)}；"
+        f"已售成本反推 {summary.get('sold_costs_recalculated', 0)}；"
         f"清空备注 {summary.get('notes_cleared', 0)}；"
         f"卖家名修改 {summary.get('seller_names_changed', 0)}"
     )
