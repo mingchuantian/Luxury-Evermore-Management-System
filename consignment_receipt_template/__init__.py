@@ -1,0 +1,2 @@
+"""Consignment agreement document generation."""
+

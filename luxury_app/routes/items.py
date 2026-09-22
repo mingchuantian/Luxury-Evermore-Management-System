@@ -28,6 +28,9 @@ from ..utils import (
     money_int,
     parse_datetime_local_to_utc,
 )
+from consignment_receipt_template.consignment_agreement_generation import (
+    generate_consignment_agreement_docx_bytes,
+)
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 
 
@@ -344,27 +347,25 @@ def register(app, items, audit_logs=None):
         if (it.get("source_type") or "").upper() != "CONSIGNMENT":
             return "invalid source_type", 400
 
+        buf = generate_consignment_agreement_docx_bytes(item=it)
         sku = (it.get("sku") or "").strip()
-        agreement_no = sku
-        mapping = {
-            "{{AGREEMENT NUMBER}}": agreement_no,
-            "{{DATE}}": _dt8_date_str(it.get("purchase_at") or it.get("created_at")),
-            "{{NAME}}": (it.get("seller_name") or "").strip(),
-            "{{PHONE OR EMAIL}}": (it.get("seller_contact") or "").strip(),
-            # Per requirement: item name uses name_in_EN
-            "{{ITEM NAME}}": (it.get("name_in_EN") or "").strip(),
-            # Reuse cost as consignment payout quote (existing schema)
-            "{{CONSIGNMENT PAYOUT QUOTE}}": _fmt_money(it.get("cost_currency") or it.get("currency") or "", it.get("cost")),
-            "{{Additional NOTE}}": (it.get("additional_notes_for_agreements") or "").strip() or "N.A.",
-        }
-        # Support both spellings/cases if template changes
-        mapping["{{ADDITIONAL NOTE}}"] = mapping["{{Additional NOTE}}"]
-
-        html = _render_agreement_html(
-            template_relpath="consignment_receipt_template/consignment_receipt.html",
-            mapping=mapping,
-        )
-        return Response(html, mimetype="text/html; charset=utf-8")
+        filename_base = re.sub(r"[^0-9A-Za-z._-]+", "_", sku).strip("_") or "consignment"
+        download_name = f"{filename_base}_consignment_agreement.docx"
+        try:
+            return send_file(
+                buf,
+                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                as_attachment=True,
+                download_name=download_name,
+            )
+        except TypeError:
+            # Flask < 2.0 compatibility
+            return send_file(
+                buf,
+                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                as_attachment=True,
+                attachment_filename=download_name,
+            )
 
     @app.post("/items/<item_id>/update")
     def item_update(item_id):

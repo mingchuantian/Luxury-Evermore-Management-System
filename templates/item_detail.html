@@ -104,8 +104,6 @@
   {% if item.source_type == "CONSIGNMENT" %}
     <a class="btn"
        href="{{ url_for('item_consignment_agreement', item_id=item._id|string) }}"
-       target="_blank"
-       rel="noopener noreferrer"
        style="text-decoration:none; display:inline-block;">
       生成consignment agreement
     </a>

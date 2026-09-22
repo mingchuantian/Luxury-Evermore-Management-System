@@ -150,4 +150,43 @@
     </tr>
   {% endfor %}
 </table>
+
+{% if session.get("role") == "Admin" %}
+  <hr style="margin: 28px 0 18px;">
+  <h3>items_view 每日维护</h3>
+  <p class="muted">系统每天自动运行一次。维护失败不会影响 Web App，可在修复问题后手动重试。</p>
+  <form method="post" action="{{ url_for('run_items_view_maintenance_now') }}" style="margin-bottom: 14px;">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn" type="submit">立刻维护</button>
+  </form>
+
+  {% if maintenance_history %}
+    <table>
+      <tr>
+        <th>时间</th>
+        <th>状态</th>
+        <th>触发方式</th>
+        <th>日志</th>
+      </tr>
+      {% for log in maintenance_history %}
+        <tr>
+          <td>{{ (log.finished_at or log.started_at)|dt8 }}</td>
+          <td>
+            {% if log.status == "success" %}
+              成功
+            {% elif log.status == "running" %}
+              运行中
+            {% else %}
+              失败
+            {% endif %}
+          </td>
+          <td>{{ "手动" if (log.triggered_by or "").startswith("admin:") else "自动" }}</td>
+          <td>{{ log.message }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">暂无维护日志。首次自动运行或点击“立刻维护”后会显示在这里。</p>
+  {% endif %}
+{% endif %}
 {% endblock %}

@@ -4,13 +4,14 @@ import re
 import zipfile
 
 from bson import json_util
-from flask import render_template, request, send_file
+from flask import flash, redirect, render_template, request, send_file, session, url_for
 from pymongo import DESCENDING
 
 from models import now
 
 from ..auth import ROLE_ADMIN, require_roles
 from ..constants import STATUS_ZH
+from ..items_view_maintenance import trigger_items_view_maintenance
 from ..utils import BUSINESS_TZ, MONGO_BUSINESS_TIMEZONE, parse_date_yyyy_mm_dd
 from datetime import timedelta
 
@@ -177,7 +178,15 @@ def _annual_totals_from_months(profit_map, sales_map, current_year):
     return annual
 
 
-def register(app, items):
+def register(
+    app,
+    items,
+    *,
+    maintenance_items=None,
+    maintenance_items_view=None,
+    maintenance_logs=None,
+    background_jobs=None,
+):
     @app.get("/admin/database-backup")
     @require_roles(ROLE_ADMIN)
     def download_database_backup():
@@ -196,6 +205,35 @@ def register(app, items):
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.post("/admin/items-view-maintenance/run")
+    @require_roles(ROLE_ADMIN)
+    def run_items_view_maintenance_now():
+        if any(value is None for value in (
+            maintenance_items,
+            maintenance_items_view,
+            maintenance_logs,
+            background_jobs,
+        )):
+            flash("items_view 维护功能尚未配置。", "error")
+            return redirect(url_for("index"))
+
+        username = (session.get("username") or "admin").strip()
+        started = trigger_items_view_maintenance(
+            maintenance_items,
+            maintenance_items_view,
+            maintenance_logs,
+            background_jobs,
+            triggered_by=f"admin:{username}",
+        )
+        if started:
+            flash("items_view 维护已在后台开始。", "ok")
+        else:
+            flash(
+                "无法启动 items_view 维护：任务可能正在运行，或维护服务暂时不可用。",
+                "error",
+            )
+        return redirect(url_for("index"))
+
     @app.get("/")
     def index():
         total = items.count_documents({})
@@ -203,6 +241,16 @@ def register(app, items):
         in_stock = items.count_documents({"status": {"$in": ["INBOUND", "RECEIVED", "ON_SHELF", "RESERVED", "REPARING"]}})
         sold = items.count_documents({"status": "SOLD"})
         inventory_values = _inventory_value_totals(items)
+        maintenance_history = []
+        if session.get("role") == ROLE_ADMIN and maintenance_logs is not None:
+            try:
+                maintenance_history = list(
+                    maintenance_logs.find({"job": "items_view_daily_maintenance"})
+                    .sort("started_at", DESCENDING)
+                    .limit(20)
+                )
+            except Exception:
+                app.logger.exception("Failed to load items_view maintenance logs.")
 
         # NOTE: do NOT mix currencies. Keep consistent with analytics/monthly tables:
         # - sales_total_sgd: only items where sold_currency (fallback listing/cost currency) == SGD
@@ -367,6 +415,7 @@ def register(app, items):
             daily=daily,
             recent_daily=recent_daily,
             monthly=monthly,
+            maintenance_history=maintenance_history,
         )
 
 

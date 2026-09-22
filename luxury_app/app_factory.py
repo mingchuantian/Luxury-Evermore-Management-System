@@ -9,6 +9,7 @@ from db import get_db
 from .auth import require_login
 from .collection_scope import RoleScopedItems
 from .indexes import ensure_indexes, ensure_item_indexes
+from .items_view_maintenance import start_items_view_maintenance_scheduler
 from .security import init_csrf
 from .routes import register_all
 from .shopify_maintenance import start_shopify_maintenance_scheduler
@@ -65,8 +66,17 @@ def create_app():
     audit_logs = db["audit_logs"]
     notes = db["notes"]
     background_jobs = db["background_jobs"]
+    items_view_maintenance_logs = db["items_view_maintenance_logs"]
     ensure_indexes(items, users, audit_logs, notes)
     ensure_item_indexes(items_view)
+    try:
+        items_view_maintenance_logs.create_index([("started_at", -1)])
+    except Exception:
+        # Logging indexes are helpful but never important enough to block startup.
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to ensure items_view maintenance log index."
+        )
 
     role_scoped_items = RoleScopedItems(items, items_view)
     register_all(
@@ -76,6 +86,10 @@ def create_app():
         audit_logs,
         notes,
         management_items=items,
+        maintenance_items=items,
+        maintenance_items_view=items_view,
+        maintenance_logs=items_view_maintenance_logs,
+        background_jobs=background_jobs,
     )
 
     # Must login to browse & operate
@@ -97,6 +111,21 @@ def create_app():
         # 如果启动失败，记录错误但不影响 Flask 应用启动
         import logging
         logging.getLogger(__name__).error(f"Failed to start Shopify maintenance scheduler: {e}", exc_info=True)
+
+    # Daily items_view maintenance is independently isolated from Flask and Shopify.
+    try:
+        start_items_view_maintenance_scheduler(
+            items,
+            items_view,
+            items_view_maintenance_logs,
+            background_jobs,
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(
+            f"Failed to start items_view maintenance scheduler: {e}",
+            exc_info=True,
+        )
 
     return app
 
