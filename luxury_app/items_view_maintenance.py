@@ -270,6 +270,11 @@ def _update_sold_prices(items_view) -> int:
     return result.modified_count
 
 
+def _positive_profit(cost: int) -> int:
+    rate = random.randint(8, 15) / 100
+    return round(cost * rate)
+
+
 def maintain_items_view(
     items,
     items_view,
@@ -383,8 +388,7 @@ def maintain_items_view(
     ))
     profit_ops = []
     for doc in profit_docs:
-        rate = random.randint(8, 15) / 100
-        profit_value = round(doc["cost"] * rate * random.choice((-1, 1)))
+        profit_value = _positive_profit(doc["cost"])
         profit_ops.append(UpdateOne(
             {
                 "_id": doc["_id"],

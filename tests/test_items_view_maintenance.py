@@ -8,6 +8,7 @@ from flask import Flask
 from luxury_app import items_view_maintenance as maintenance
 from luxury_app.auth import ROLE_ADMIN, ROLE_STAFF
 from luxury_app.routes.dashboard import register as register_dashboard
+from fix_items_view_negative_profits import fix_negative_profits
 
 
 class FakeLogs:
@@ -44,6 +45,27 @@ class FakeOpenAIResponse:
 
 
 class ItemsViewMaintenanceTests(unittest.TestCase):
+    def test_new_profit_is_always_positive(self):
+        with patch(
+            "luxury_app.items_view_maintenance.random.randint",
+            return_value=12,
+        ):
+            self.assertEqual(maintenance._positive_profit(1000), 120)
+
+    def test_correction_script_only_updates_negative_profit(self):
+        items_view = MagicMock()
+        items_view.update_many.return_value = SimpleNamespace(modified_count=7)
+
+        changed = fix_negative_profits(items_view)
+
+        self.assertEqual(changed, 7)
+        query, pipeline = items_view.update_many.call_args.args
+        self.assertEqual(query["status"], "SOLD")
+        self.assertEqual(
+            pipeline,
+            [{"$set": {"profit": {"$abs": "$profit"}}}],
+        )
+
     def test_invalid_translation_output_is_retried_before_succeeding(self):
         responses = [
             FakeOpenAIResponse({"output_text": "香奈儿 CF"}),
