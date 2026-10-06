@@ -709,6 +709,51 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual([doc["_id"] for doc in items.docs], [admin_id])
 
+    def test_management_can_settle_visible_admin_and_own_consignments(self):
+        own_id = ObjectId()
+        admin_id = ObjectId()
+        created_at = datetime(2026, 10, 6, tzinfo=timezone.utc)
+        sale = {
+            "sold_at": created_at,
+            "sold_currency": "SGD",
+            "sold_price": 5000,
+            "receipt_no": "SETTLE01",
+        }
+        items = FakeInventory([
+            {
+                "_id": own_id, "sku": "MGSET01", "name": "Own Bag",
+                "source_type": "CONSIGNMENT",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
+                "created_at": created_at, "purchase_at": created_at,
+                "sold_record": [sale],
+            },
+            {
+                "_id": admin_id, "sku": "ADSET01", "name": "Admin Bag",
+                "source_type": "CONSIGNMENT",
+                "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "created_at": created_at, "purchase_at": created_at,
+                "sold_record": [sale],
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client, patch(
+            "luxury_app.routes.sales."
+            "generate_consignment_settlement_docx_bytes",
+            return_value=BytesIO(b"docx"),
+        ):
+            self._login(client, ROLE_MANAGEMENT)
+            own = client.post(
+                f"/management/items/{own_id}/settlement/consignment",
+                data={"consignment_fee": "500"},
+            )
+            admin = client.post(
+                f"/management/items/{admin_id}/settlement/consignment",
+                data={"consignment_fee": "500"},
+            )
+
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(admin.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,9 @@ from ..utils import (
 from consignment_receipt_template.consignment_agreement_generation import (
     generate_consignment_agreement_docx_bytes,
 )
+from consignment_receipt_template.consignment_settlement_generation import (
+    generate_consignment_settlement_docx_bytes,
+)
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 
 
@@ -365,6 +368,57 @@ def register(app, items, audit_logs=None):
                 mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 as_attachment=True,
                 attachment_filename=download_name,
+            )
+
+    @app.post("/items/<item_id>/settlement/consignment")
+    def item_consignment_settlement(item_id):
+        try:
+            oid = ObjectId(item_id)
+        except Exception:
+            return "invalid id", 400
+        item = items.find_one({
+            "_id": oid,
+            "status": "SOLD",
+            "source_type": "CONSIGNMENT",
+        })
+        if not item:
+            return "not found", 404
+        try:
+            document = generate_consignment_settlement_docx_bytes(
+                item=item,
+                consignment_fee=request.form.get("consignment_fee"),
+                settlement_at=now(),
+            )
+        except ValueError as exc:
+            return str(exc), 400
+
+        sold = (item.get("sold_record") or [{}])[-1] or {}
+        filename = re.sub(
+            r"[^0-9A-Za-z._-]+",
+            "_",
+            sold.get("receipt_no") or item.get("sku") or "settlement",
+        ).strip("_") or "settlement"
+        try:
+            return send_file(
+                document,
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+                as_attachment=True,
+                download_name=f"{filename}_consignment_settlement.docx",
+            )
+        except TypeError:
+            return send_file(
+                document,
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+                as_attachment=True,
+                attachment_filename=(
+                    f"{filename}_consignment_settlement.docx"
+                ),
             )
 
     @app.post("/items/<item_id>/update")

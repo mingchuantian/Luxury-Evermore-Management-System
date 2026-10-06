@@ -17,6 +17,9 @@ from ..constants import (
 )
 from ..utils import money_int, parse_datetime_local_to_utc
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
+from consignment_receipt_template.consignment_settlement_generation import (
+    generate_consignment_settlement_docx_bytes,
+)
 
 
 MANAGEMENT_SALE_OWNERSHIPS = (OWNERSHIP_ADMIN, OWNERSHIP_MANAGEMENT)
@@ -66,6 +69,64 @@ def _send_receipt(item, record, receipt_number, sku):
             mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             as_attachment=True,
             attachment_filename=download_name,
+        )
+
+
+def _management_visible_sold_item(items, oid):
+    item = items.find_one({
+        "_id": oid,
+        "ownership": {"$in": list(MANAGEMENT_SALE_OWNERSHIPS)},
+        "status": "SOLD",
+    }) if oid else None
+    if not item:
+        return None
+    if item.get("ownership") != OWNERSHIP_ADMIN:
+        return item
+    recent_admin_sold_ids = [
+        doc["_id"]
+        for doc in items.find({
+            "ownership": OWNERSHIP_ADMIN,
+            "status": "SOLD",
+        }).sort("sold_record.sold_at", DESCENDING).limit(50)
+        if doc.get("_id") is not None
+    ]
+    return item if oid in recent_admin_sold_ids else None
+
+
+def _send_consignment_settlement(item, consignment_fee):
+    try:
+        document = generate_consignment_settlement_docx_bytes(
+            item=item,
+            consignment_fee=consignment_fee,
+            settlement_at=now(),
+        )
+    except ValueError as exc:
+        return str(exc), 400
+    sold = (item.get("sold_record") or [{}])[-1] or {}
+    filename = re.sub(
+        r"[^0-9A-Za-z._-]+",
+        "_",
+        sold.get("receipt_no") or item.get("sku") or "settlement",
+    ).strip("_") or "settlement"
+    try:
+        return send_file(
+            document,
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            as_attachment=True,
+            download_name=f"{filename}_consignment_settlement.docx",
+        )
+    except TypeError:
+        return send_file(
+            document,
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            as_attachment=True,
+            attachment_filename=f"{filename}_consignment_settlement.docx",
         )
 
 
@@ -159,27 +220,9 @@ def register(app, items, audit_logs=None):
     @require_roles(ROLE_MANAGEMENT)
     def management_item_receipt(item_id):
         oid = _object_id(item_id)
-        item = items.find_one({
-            "_id": oid,
-            "ownership": {"$in": list(MANAGEMENT_SALE_OWNERSHIPS)},
-            "status": "SOLD",
-        }) if oid else None
+        item = _management_visible_sold_item(items, oid)
         if not item:
             return "Not found", 404
-
-        # Management-owned sales remain available. Admin-owned sales follow the
-        # same visibility rule as Management Items: latest 50 sales only.
-        if item.get("ownership") == OWNERSHIP_ADMIN:
-            recent_admin_sold_ids = [
-                doc["_id"]
-                for doc in items.find({
-                    "ownership": OWNERSHIP_ADMIN,
-                    "status": "SOLD",
-                }).sort("sold_record.sold_at", DESCENDING).limit(50)
-                if doc.get("_id") is not None
-            ]
-            if oid not in recent_admin_sold_ids:
-                return "Not found", 404
 
         sold_records = item.get("sold_record") or []
         if not sold_records:
@@ -188,6 +231,17 @@ def register(app, items, audit_logs=None):
         sku = (item.get("sku") or "").strip()
         receipt_number = (sold.get("receipt_no") or "").strip()
         return _send_receipt(item, sold, receipt_number, sku)
+
+    @app.post("/management/items/<item_id>/settlement/consignment")
+    @require_roles(ROLE_MANAGEMENT)
+    def management_item_consignment_settlement(item_id):
+        oid = _object_id(item_id)
+        item = _management_visible_sold_item(items, oid)
+        if not item or item.get("source_type") != "CONSIGNMENT":
+            return "Not found", 404
+        return _send_consignment_settlement(
+            item, request.form.get("consignment_fee")
+        )
 
     @app.get("/sales/new/<item_id>")
     def sale_new_form(item_id):

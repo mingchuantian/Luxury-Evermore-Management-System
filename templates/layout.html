@@ -203,5 +203,46 @@
   {% endwith %}
 
   {% block content %}{% endblock %}
+  <script>
+    async function settleConsignmentPayout(endpoint, itemName, currency) {
+      const value = prompt(`Consignment fee for ${itemName} (${currency}):`);
+      if (value === null) return;
+      const fee = value.trim();
+      if (!/^\d+(\.\d{1,2})?$/.test(fee)) {
+        alert("Please enter a valid non-negative amount with up to 2 decimal places.");
+        return;
+      }
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+      const body = new URLSearchParams({ consignment_fee: fee });
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "X-CSRF-Token": csrf,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          },
+          body: body.toString()
+        });
+        if (!response.ok) {
+          alert(`Settlement failed: ${await response.text()}`);
+          return;
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+        const filename = match ? decodeURIComponent(match[1]) : "consignment_settlement.docx";
+        const downloadUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(downloadUrl);
+      } catch (error) {
+        alert(`Network error: ${error}`);
+      }
+    }
+  </script>
 </body>
 </html>
