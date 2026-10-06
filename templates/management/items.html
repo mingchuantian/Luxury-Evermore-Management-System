@@ -76,6 +76,7 @@
           <a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer"><button type="button">Edit</button></a>
           {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}<a href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}"><button type="button">Mark as Sold</button></a>{% endif %}
           {% if session.get("role") == "Management" and item.status == "SOLD" %}<a href="{{ url_for('management_item_receipt', item_id=item._id|string) }}"><button type="button">Generate Receipt</button></a>{% endif %}
+          <button type="button" onclick='deleteManagementItem({{ (item._id|string)|tojson }}, {{ item.name|tojson }})'>Delete</button>
         </td>
       </tr>
     {% endfor %}
@@ -116,4 +117,17 @@
 {% else %}
   <p class="muted">No Admin items found.</p>
 {% endif %}
+<script>
+  function deleteManagementItem(itemId, name) {
+    if (!confirm(`Delete “${name}”? This cannot be undone.`)) return;
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
+    fetch(`/management/items/${itemId}/action/delete`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrf }
+    }).then(async response => {
+      if (response.ok) location.reload();
+      else alert(`Delete failed: ${await response.text()}`);
+    }).catch(error => alert(`Network error: ${error}`));
+  }
+</script>
 {% endblock %}

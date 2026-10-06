@@ -17,7 +17,7 @@ from .shopify_maintenance import start_shopify_maintenance_scheduler
 
 def create_app():
     # Ensure templates are loaded from project-root /templates (not luxury_app/templates)
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).absolute().parents[1]
     template_dir = project_root / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     secret_key = (os.getenv("FLASK_SECRET") or "").strip()

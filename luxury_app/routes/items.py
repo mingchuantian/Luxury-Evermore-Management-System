@@ -78,8 +78,8 @@ def register(app, items, audit_logs=None):
         """
         from pathlib import Path
 
-        project_root = Path(__file__).resolve().parents[2]
-        tpl_path = (project_root / template_relpath).resolve()
+        project_root = Path(__file__).absolute().parents[2]
+        tpl_path = (project_root / template_relpath).absolute()
         html = tpl_path.read_text(encoding="utf-8")
         for k, v in (mapping or {}).items():
             html = html.replace(k, "" if v is None else str(v))

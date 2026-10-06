@@ -60,7 +60,7 @@ def build_consignment_agreement_mapping(item: Dict[str, Any]) -> Dict[str, str]:
 
 
 def template_path() -> Path:
-    return Path(__file__).resolve().parent / TEMPLATE_FILENAME
+    return Path(__file__).absolute().parent / TEMPLATE_FILENAME
 
 
 def generate_consignment_agreement_docx_bytes(*, item: Dict[str, Any]) -> BytesIO:

@@ -1,5 +1,6 @@
 import re
 import unittest
+from io import BytesIO
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -120,6 +121,13 @@ class FakeInventory:
                     target.append(deepcopy(value))
             return SimpleNamespace(modified_count=1)
         return SimpleNamespace(modified_count=0)
+
+    def delete_one(self, query):
+        for index, doc in enumerate(self.docs):
+            if _matches(doc, query):
+                del self.docs[index]
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
 
 
 class OwnershipTests(unittest.TestCase):
@@ -622,6 +630,84 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(updated["profit"], 500)
         self.assertEqual(updated["status"], "ON_SHELF")
         self.assertEqual(updated["ownership"], OWNERSHIP_MANAGEMENT)
+
+    def test_management_can_generate_agreement_for_own_item_only(self):
+        buy_in_id = ObjectId()
+        consignment_id = ObjectId()
+        admin_id = ObjectId()
+        created_at = datetime(2026, 10, 6, tzinfo=timezone.utc)
+        items = FakeInventory([
+            {
+                "_id": buy_in_id, "sku": "MGBUY01", "name": "Buy In Bag",
+                "name_in_EN": "Buy In Bag", "source_type": "BUY_IN",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "RECEIVED",
+                "created_at": created_at, "purchase_at": created_at,
+                "cost": 1000, "cost_currency": "SGD",
+            },
+            {
+                "_id": consignment_id, "sku": "MGCON01",
+                "name": "Consignment Bag", "source_type": "CONSIGNMENT",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "ON_SHELF",
+                "created_at": created_at, "purchase_at": created_at,
+            },
+            {
+                "_id": admin_id, "sku": "ADMIN01", "name": "Admin Bag",
+                "source_type": "BUY_IN", "ownership": OWNERSHIP_ADMIN,
+                "status": "RECEIVED", "created_at": created_at,
+                "purchase_at": created_at,
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client, patch(
+            "luxury_app.routes.management."
+            "generate_consignment_agreement_docx_bytes",
+            return_value=BytesIO(b"docx"),
+        ):
+            self._login(client, ROLE_MANAGEMENT)
+            purchase = client.get(
+                f"/management/items/{buy_in_id}/agreement/purchase"
+            )
+            consignment = client.get(
+                f"/management/items/{consignment_id}/agreement/consignment"
+            )
+            admin = client.get(
+                f"/management/items/{admin_id}/agreement/purchase"
+            )
+
+        self.assertEqual(purchase.status_code, 200)
+        self.assertIn(b"Buy In Bag", purchase.data)
+        self.assertEqual(consignment.status_code, 200)
+        self.assertEqual(admin.status_code, 404)
+
+    def test_management_can_delete_only_own_item(self):
+        own_id = ObjectId()
+        admin_id = ObjectId()
+        created_at = datetime(2026, 10, 6, tzinfo=timezone.utc)
+        items = FakeInventory([
+            {
+                "_id": own_id, "sku": "MGDEL01", "name": "Own Bag",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "RECEIVED",
+                "created_at": created_at, "purchase_at": created_at,
+            },
+            {
+                "_id": admin_id, "sku": "ADMIN02", "name": "Admin Bag",
+                "ownership": OWNERSHIP_ADMIN, "status": "RECEIVED",
+                "created_at": created_at, "purchase_at": created_at,
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client:
+            self._login(client, ROLE_MANAGEMENT)
+            denied = client.post(
+                f"/management/items/{admin_id}/action/delete"
+            )
+            deleted = client.post(
+                f"/management/items/{own_id}/action/delete"
+            )
+
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual([doc["_id"] for doc in items.docs], [admin_id])
 
 
 if __name__ == "__main__":

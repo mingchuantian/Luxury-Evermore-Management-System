@@ -221,7 +221,7 @@ def translate_product_name(original_name: str) -> str:
 
 def _load_seller_names() -> List[str]:
     csv_path = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).absolute().parents[1]
         / "name_database"
         / "name_database.csv"
     )

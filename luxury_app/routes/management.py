@@ -1,14 +1,26 @@
 """English Management/Staff pages backed by the shared items collection."""
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import ceil
+from pathlib import Path
 
 from bson import ObjectId
-from flask import flash, redirect, render_template, request, url_for
+from flask import (
+    Response,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
 from pymongo import DESCENDING
 
 from models import now
+from consignment_receipt_template.consignment_agreement_generation import (
+    generate_consignment_agreement_docx_bytes,
+)
 
 from ..auth import ROLE_MANAGEMENT, require_roles
 from ..audit import insert_audit_logs, make_change_detail, push_item_audits
@@ -34,6 +46,61 @@ def _is_object_id(value):
 
 
 def register(app, items, audit_logs=None):
+    def _dt8_date_str(value):
+        if value is None or value == "":
+            return ""
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except Exception:
+                return value
+        if not isinstance(value, datetime):
+            return str(value)
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(
+            timezone(timedelta(hours=8))
+        ).strftime("%Y-%m-%d")
+
+    def _fmt_money(currency, amount):
+        try:
+            amount = int(amount or 0)
+        except Exception:
+            amount = 0
+        currency = (currency or "").strip().upper()
+        return f"{currency} {amount:,}".strip()
+
+    def _render_purchase_agreement(item):
+        template_path = (
+            Path(__file__).absolute().parents[2]
+            / "purchase_agreement_template"
+            / "purchase_agreement.html"
+        )
+        html = template_path.read_text(encoding="utf-8")
+        mapping = {
+            "{{REF NUMBER}}": (item.get("sku") or "").strip(),
+            "{{DATE}}": _dt8_date_str(
+                item.get("purchase_at") or item.get("created_at")
+            ),
+            "{{NAME}}": (item.get("seller_name") or "").strip(),
+            "{{PHONE OR EMAIL}}": (
+                item.get("seller_contact") or ""
+            ).strip(),
+            "{{ITEM NAME}}": (item.get("name_in_EN") or "").strip(),
+            "{{PURCHASE PRICE}}": _fmt_money(
+                item.get("cost_currency") or item.get("currency"),
+                item.get("cost"),
+            ),
+            "{{ADDITIONAL NOTE}}": (
+                item.get("additional_notes_for_agreements") or ""
+            ).strip() or "N.A.",
+            "{{METHOD OF PAYMENT}}": "N.A.",
+            "{{PAYMENT STATUS}}": "Paid",
+        }
+        for token, value in mapping.items():
+            html = html.replace(token, value)
+        return html
+
     def _recent_admin_sold_ids():
         return [
             doc["_id"]
@@ -304,3 +371,79 @@ def register(app, items, audit_logs=None):
         insert_audit_logs(audit_logs, entries)
         flash("Saved", "ok")
         return redirect(url_for("management_item_detail", item_key=item_id))
+
+    @app.get("/management/items/<item_id>/agreement/purchase")
+    @require_roles(ROLE_MANAGEMENT)
+    def management_item_purchase_agreement(item_id):
+        if not _is_object_id(item_id):
+            return "invalid id", 400
+        item = items.find_one(_management_owned_filter({
+            "_id": ObjectId(item_id),
+            "source_type": "BUY_IN",
+        }))
+        if not item:
+            return "Not found", 404
+        return Response(
+            _render_purchase_agreement(item),
+            mimetype="text/html; charset=utf-8",
+        )
+
+    @app.get("/management/items/<item_id>/agreement/consignment")
+    @require_roles(ROLE_MANAGEMENT)
+    def management_item_consignment_agreement(item_id):
+        if not _is_object_id(item_id):
+            return "invalid id", 400
+        item = items.find_one(_management_owned_filter({
+            "_id": ObjectId(item_id),
+            "source_type": "CONSIGNMENT",
+        }))
+        if not item:
+            return "Not found", 404
+
+        document = generate_consignment_agreement_docx_bytes(item=item)
+        filename = re.sub(
+            r"[^0-9A-Za-z._-]+", "_", (item.get("sku") or "")
+        ).strip("_") or "consignment"
+        kwargs = {
+            "mimetype": (
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            "as_attachment": True,
+        }
+        try:
+            return send_file(
+                document,
+                download_name=f"{filename}_consignment_agreement.docx",
+                **kwargs,
+            )
+        except TypeError:
+            return send_file(
+                document,
+                attachment_filename=(
+                    f"{filename}_consignment_agreement.docx"
+                ),
+                **kwargs,
+            )
+
+    @app.post("/management/items/<item_id>/action/delete")
+    @require_roles(ROLE_MANAGEMENT)
+    def management_item_delete(item_id):
+        if not _is_object_id(item_id):
+            return "invalid id", 400
+        oid = ObjectId(item_id)
+        scope = _management_owned_filter({"_id": oid})
+        item = items.find_one(scope)
+        if not item:
+            return "Not found", 404
+        if audit_logs is not None and item.get("sku"):
+            insert_audit_logs(audit_logs, [make_change_detail(
+                sku=item.get("sku"),
+                target="deleted",
+                from_value="",
+                to_value=True,
+            )])
+        result = items.delete_one(scope)
+        if result.deleted_count != 1:
+            return "Not found", 404
+        return "", 204

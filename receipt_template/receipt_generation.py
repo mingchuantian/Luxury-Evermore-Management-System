@@ -288,7 +288,7 @@ def replace_image_everywhere(doc: Document, placeholder: str, image_stream: Byte
 
 
 def template_path() -> Path:
-    return Path(__file__).resolve().parent / TEMPLATE_FILENAME
+    return Path(__file__).absolute().parent / TEMPLATE_FILENAME
 
 
 def build_receipt_mapping(*, item: Dict[str, Any], sold: Dict[str, Any]) -> Dict[str, Any]:
