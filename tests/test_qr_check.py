@@ -2,7 +2,7 @@ import unittest
 
 from flask import Flask
 
-from luxury_app.auth import ROLE_STAFF
+from luxury_app.auth import ROLE_MANAGEMENT, ROLE_STAFF
 from luxury_app.collection_scope import RoleScopedItems
 from luxury_app.routes.qr_check import register
 
@@ -58,6 +58,18 @@ class QrCheckTests(unittest.TestCase):
         self.assertIn(b"html5-qrcode@2.3.8", response.data)
         self.assertIn(b'id="qr-reader"', response.data)
         self.assertIn(b'id="manual-form"', response.data)
+
+    def test_management_scanner_page_is_in_english(self):
+        app = self._app(FakeItems([]))
+        with app.test_client() as client:
+            with client.session_transaction() as session:
+                session["role"] = ROLE_MANAGEMENT
+            response = client.get("/qr-check")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"QR Link Lookup", response.data)
+        self.assertIn(b"Start Rear Camera", response.data)
+        self.assertIn(b"Scan History", response.data)
 
     def test_unlinked_and_missing_skus_are_distinct(self):
         items = FakeItems([{

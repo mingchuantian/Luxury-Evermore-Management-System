@@ -384,10 +384,14 @@ def register(app, items, audit_logs=None):
         if not item:
             return "not found", 404
         try:
+            payout_only = request.form.get("payout_only") == "1"
             document = generate_consignment_settlement_docx_bytes(
                 item=item,
-                consignment_fee=request.form.get("consignment_fee"),
+                payout_for_customer=request.form.get(
+                    "payout_for_customer"
+                ),
                 settlement_at=now(),
+                payout_only=payout_only,
             )
         except ValueError as exc:
             return str(exc), 400
@@ -398,6 +402,9 @@ def register(app, items, audit_logs=None):
             "_",
             sold.get("receipt_no") or item.get("sku") or "settlement",
         ).strip("_") or "settlement"
+        suffix = (
+            "customer_payout" if payout_only else "consignment_settlement"
+        )
         try:
             return send_file(
                 document,
@@ -406,7 +413,7 @@ def register(app, items, audit_logs=None):
                     "wordprocessingml.document"
                 ),
                 as_attachment=True,
-                download_name=f"{filename}_consignment_settlement.docx",
+                download_name=f"{filename}_{suffix}.docx",
             )
         except TypeError:
             return send_file(
@@ -417,7 +424,7 @@ def register(app, items, audit_logs=None):
                 ),
                 as_attachment=True,
                 attachment_filename=(
-                    f"{filename}_consignment_settlement.docx"
+                    f"{filename}_{suffix}.docx"
                 ),
             )
 

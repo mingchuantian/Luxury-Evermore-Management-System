@@ -77,6 +77,7 @@
           {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}<a href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}"><button type="button">Mark as Sold</button></a>{% endif %}
           {% if session.get("role") == "Management" and item.status == "SOLD" %}<a href="{{ url_for('management_item_receipt', item_id=item._id|string) }}"><button type="button">Generate Receipt</button></a>{% endif %}
           {% if session.get("role") == "Management" and item.status == "SOLD" and item.source_type == "CONSIGNMENT" %}<button type="button" onclick='settleConsignmentPayout({{ url_for("management_item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }})'>Settle Consignment Payout</button>{% endif %}
+          {% if session.get("role") == "Management" and item.status == "SOLD" and item.source_type == "CONSIGNMENT" %}<button type="button" onclick='settleConsignmentPayout({{ url_for("management_item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }}, true)'>Settle Payout for Customer</button>{% endif %}
           <button type="button" onclick='deleteManagementItem({{ (item._id|string)|tojson }}, {{ item.name|tojson }})'>Delete</button>
         </td>
       </tr>
@@ -109,6 +110,7 @@
             Sold
             {% if session.get("role") == "Management" %}<a class="btn" href="{{ url_for('management_item_receipt', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Generate Receipt</a>{% endif %}
             {% if session.get("role") == "Management" and item.source_type == "CONSIGNMENT" %}<button class="btn" type="button" onclick='settleConsignmentPayout({{ url_for("management_item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }})'>Settle Consignment Payout</button>{% endif %}
+            {% if session.get("role") == "Management" and item.source_type == "CONSIGNMENT" %}<button class="btn" type="button" onclick='settleConsignmentPayout({{ url_for("management_item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }}, true)'>Settle Payout for Customer</button>{% endif %}
           {% else %}
             -
           {% endif %}

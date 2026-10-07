@@ -93,12 +93,15 @@ def _management_visible_sold_item(items, oid):
     return item if oid in recent_admin_sold_ids else None
 
 
-def _send_consignment_settlement(item, consignment_fee):
+def _send_consignment_settlement(
+    item, payout_for_customer, *, payout_only=False
+):
     try:
         document = generate_consignment_settlement_docx_bytes(
             item=item,
-            consignment_fee=consignment_fee,
+            payout_for_customer=payout_for_customer,
             settlement_at=now(),
+            payout_only=payout_only,
         )
     except ValueError as exc:
         return str(exc), 400
@@ -108,6 +111,7 @@ def _send_consignment_settlement(item, consignment_fee):
         "_",
         sold.get("receipt_no") or item.get("sku") or "settlement",
     ).strip("_") or "settlement"
+    suffix = "customer_payout" if payout_only else "consignment_settlement"
     try:
         return send_file(
             document,
@@ -116,7 +120,7 @@ def _send_consignment_settlement(item, consignment_fee):
                 "wordprocessingml.document"
             ),
             as_attachment=True,
-            download_name=f"{filename}_consignment_settlement.docx",
+            download_name=f"{filename}_{suffix}.docx",
         )
     except TypeError:
         return send_file(
@@ -126,7 +130,7 @@ def _send_consignment_settlement(item, consignment_fee):
                 "wordprocessingml.document"
             ),
             as_attachment=True,
-            attachment_filename=f"{filename}_consignment_settlement.docx",
+            attachment_filename=f"{filename}_{suffix}.docx",
         )
 
 
@@ -240,7 +244,9 @@ def register(app, items, audit_logs=None):
         if not item or item.get("source_type") != "CONSIGNMENT":
             return "Not found", 404
         return _send_consignment_settlement(
-            item, request.form.get("consignment_fee")
+            item,
+            request.form.get("payout_for_customer"),
+            payout_only=request.form.get("payout_only") == "1",
         )
 
     @app.get("/sales/new/<item_id>")

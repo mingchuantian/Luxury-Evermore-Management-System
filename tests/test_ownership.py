@@ -744,11 +744,11 @@ class OwnershipTests(unittest.TestCase):
             self._login(client, ROLE_MANAGEMENT)
             own = client.post(
                 f"/management/items/{own_id}/settlement/consignment",
-                data={"consignment_fee": "500"},
+                data={"payout_for_customer": "4500"},
             )
             admin = client.post(
                 f"/management/items/{admin_id}/settlement/consignment",
-                data={"consignment_fee": "500"},
+                data={"payout_for_customer": "4500"},
             )
 
         self.assertEqual(own.status_code, 200)

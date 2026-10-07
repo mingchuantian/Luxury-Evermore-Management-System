@@ -36,10 +36,10 @@ class ConsignmentSettlementTests(unittest.TestCase):
             }],
         }
 
-    def test_mapping_uses_sale_data_and_subtracts_only_entered_fee(self):
+    def test_mapping_uses_entered_customer_payout(self):
         mapping = build_consignment_settlement_mapping(
             self.item,
-            consignment_fee="1700",
+            payout_for_customer="8500",
             settlement_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
         )
         self.assertEqual(mapping["[SALE PRICE]"], "SGD $10,200.00")
@@ -48,20 +48,20 @@ class ConsignmentSettlementTests(unittest.TestCase):
         self.assertEqual(mapping["[SETTLEMENT RECEIPT ID]"], "LE-2026-01892")
         self.assertEqual(mapping["[SOURCE SALES RECEIPT]"], "LE-2026-01892")
 
-    def test_fee_must_be_non_negative_and_not_exceed_sale_price(self):
+    def test_payout_must_be_non_negative_and_not_exceed_sale_price(self):
         with self.assertRaisesRegex(ValueError, "cannot be negative"):
             build_consignment_settlement_mapping(
-                self.item, consignment_fee="-1"
+                self.item, payout_for_customer="-1"
             )
         with self.assertRaisesRegex(ValueError, "cannot exceed"):
             build_consignment_settlement_mapping(
-                self.item, consignment_fee="10200.01"
+                self.item, payout_for_customer="10200.01"
             )
 
     def test_generation_fills_template_and_preserves_other_parts(self):
         generated = generate_consignment_settlement_docx_bytes(
             item=self.item,
-            consignment_fee="1700",
+            payout_for_customer="8500",
             settlement_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
         )
         with ZipFile(template_path(), "r") as source, ZipFile(
@@ -81,6 +81,23 @@ class ConsignmentSettlementTests(unittest.TestCase):
                     hashlib.sha256(result.read(name)).digest(),
                     name,
                 )
+
+    def test_customer_payout_version_hides_sale_price_and_commission_rows(self):
+        generated = generate_consignment_settlement_docx_bytes(
+            item=self.item,
+            payout_for_customer="8500",
+            settlement_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
+            payout_only=True,
+        )
+        with ZipFile(generated, "r") as result:
+            xml = result.read(DOCUMENT_PART).decode("utf-8")
+
+        self.assertNotIn("Sale Price</w:t>", xml)
+        self.assertNotIn("LE Commission / Adjustment", xml)
+        self.assertNotIn("[SALE PRICE]", xml)
+        self.assertNotIn("[CONSIGNMENT FEE]", xml)
+        self.assertIn("Amount Due to Consignor", xml)
+        self.assertIn("SGD $8,500.00", xml)
 
     def test_admin_and_staff_use_their_role_scoped_inventory(self):
         class FakeItems:
@@ -108,21 +125,33 @@ class ConsignmentSettlementTests(unittest.TestCase):
         ):
             admin_response = client.post(
                 f"/items/{admin_id}/settlement/consignment",
-                data={"consignment_fee": "1700"},
+                data={"payout_for_customer": "8500"},
             )
             with client.session_transaction() as session:
                 session["role"] = ROLE_STAFF
             staff_response = client.post(
                 f"/items/{staff_id}/settlement/consignment",
-                data={"consignment_fee": "1700"},
+                data={"payout_for_customer": "8500"},
+            )
+            payout_only_response = client.post(
+                f"/items/{staff_id}/settlement/consignment",
+                data={
+                    "payout_for_customer": "8500",
+                    "payout_only": "1",
+                },
             )
             staff_cannot_read_admin = client.post(
                 f"/items/{admin_id}/settlement/consignment",
-                data={"consignment_fee": "1700"},
+                data={"payout_for_customer": "8500"},
             )
 
         self.assertEqual(admin_response.status_code, 200)
         self.assertEqual(staff_response.status_code, 200)
+        self.assertEqual(payout_only_response.status_code, 200)
+        self.assertIn(
+            "_customer_payout.docx",
+            payout_only_response.headers["Content-Disposition"],
+        )
         self.assertEqual(staff_cannot_read_admin.status_code, 404)
 
     def test_purchase_agreement_uses_current_address(self):

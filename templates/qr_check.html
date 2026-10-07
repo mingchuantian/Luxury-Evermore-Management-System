@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block content %}
+{% set management_ui = session.get("role") == "Management" %}
 <style>
   .qr-page { max-width: 620px; margin: 0 auto; }
   .qr-page h2 { margin-bottom: 6px; }
@@ -47,36 +48,63 @@
 </style>
 
 <div class="qr-page">
-  <h2>QR查链接</h2>
-  <p class="muted qr-intro">扫描商品上的 luxuryevermore.com/{SKU} QR Code，立即检查数据库中的 Shopify 连接状态。</p>
+  <h2>{{ "QR Link Lookup" if management_ui else "QR查链接" }}</h2>
+  <p class="muted qr-intro">
+    {% if management_ui %}
+      Scan the luxuryevermore.com/{SKU} QR code on an item to check its Shopify link status.
+    {% else %}
+      扫描商品上的 luxuryevermore.com/{SKU} QR Code，立即检查数据库中的 Shopify 连接状态。
+    {% endif %}
+  </p>
 
   <div class="qr-camera"><div id="qr-reader"></div></div>
   <div class="qr-controls">
-    <button class="btn" id="start-camera" type="button">开启后置摄像头</button>
-    <button class="btn" id="stop-camera" type="button" disabled>停止摄像头</button>
-    <span class="muted" id="camera-message">正在请求摄像头权限…</span>
+    <button class="btn" id="start-camera" type="button">{{ "Start Rear Camera" if management_ui else "开启后置摄像头" }}</button>
+    <button class="btn" id="stop-camera" type="button" disabled>{{ "Stop Camera" if management_ui else "停止摄像头" }}</button>
+    <span class="muted" id="camera-message">{{ "Requesting camera permission…" if management_ui else "正在请求摄像头权限…" }}</span>
   </div>
 
   <form class="qr-manual" id="manual-form">
-    <input id="manual-value" autocomplete="off" placeholder="也可以输入 SKU 或粘贴 QR 链接">
-    <button class="btn" type="submit">查询</button>
+    <input id="manual-value" autocomplete="off" placeholder="{{ 'Enter a SKU or paste a QR link' if management_ui else '也可以输入 SKU 或粘贴 QR 链接' }}">
+    <button class="btn" type="submit">{{ "Look Up" if management_ui else "查询" }}</button>
   </form>
 
   <div class="qr-status" id="qr-status" aria-live="polite">
-    <div class="qr-result-title">等待扫描</div>
-    <div class="muted">摄像头识别后会在这里显示结果。</div>
+    <div class="qr-result-title">{{ "Ready to Scan" if management_ui else "等待扫描" }}</div>
+    <div class="muted">{{ "The result will appear here after a QR code is detected." if management_ui else "摄像头识别后会在这里显示结果。" }}</div>
   </div>
 
   <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-    <h3>本次扫描</h3>
-    <span class="muted" id="scan-count">0 件</span>
+    <h3>{{ "Scan History" if management_ui else "本次扫描" }}</h3>
+    <span class="muted" id="scan-count">{{ "0 items" if management_ui else "0 件" }}</span>
   </div>
-  <ul class="qr-history" id="qr-history"><li class="muted">尚无记录</li></ul>
+  <ul class="qr-history" id="qr-history"><li class="muted">{{ "No scans yet." if management_ui else "尚无记录" }}</li></ul>
 </div>
 
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 (() => {
+  const text = {{ ({
+    "invalidTitle": "Unable to Read" if management_ui else "无法识别",
+    "linked": "Connected" if management_ui else "已连接",
+    "unlinked": "Not connected" if management_ui else "未连接",
+    "missing": "SKU not found" if management_ui else "数据库无此 SKU",
+    "itemsSuffix": " items" if management_ui else " 件",
+    "checking": "Checking" if management_ui else "正在查询",
+    "lookupFailed": "Database lookup failed. Please try again." if management_ui else "数据库查询失败，请重试。",
+    "notFoundTitle": "SKU Not Found in Database" if management_ui else "数据库中找不到这个 SKU",
+    "connectedTitle": "✓ Connected to Shopify" if management_ui else "✓ 已成功连接 Shopify",
+    "shopifyTitle": "Shopify product name:" if management_ui else "Shopify 商品名：",
+    "noShopifyTitle": "(No Shopify product name in database)" if management_ui else "（数据库中没有商品名）",
+    "unlinkedTitle": "Not Connected to Shopify" if management_ui else "未连接 Shopify",
+    "wrongQr": "This is not a luxuryevermore.com/{SKU} QR code." if management_ui else "这不是 luxuryevermore.com/{SKU} 格式的 QR Code。",
+    "componentFailed": "The scanner could not be loaded. Refresh the page or use manual lookup." if management_ui else "扫码组件加载失败，请刷新页面或使用手动查询。",
+    "requestingCamera": "Requesting camera permission…" if management_ui else "正在请求摄像头权限…",
+    "cameraReady": "Rear camera is on. Place the QR code inside the frame." if management_ui else "后置摄像头已开启，请将 QR Code 放入框内。",
+    "cameraDenied": "The camera could not start. Allow camera access and tap Start Rear Camera, or use manual lookup." if management_ui else "无法自动开启摄像头，请允许权限后点击开启；也可使用手动查询。",
+    "cameraStopped": "Camera stopped." if management_ui else "摄像头已停止。",
+    "invalidManual": "Enter a valid SKU or paste a luxuryevermore.com/{SKU} link." if management_ui else "请输入有效 SKU，或粘贴 luxuryevermore.com/{SKU} 链接。"
+  })|tojson }};
   const readerId = "qr-reader";
   const startButton = document.getElementById("start-camera");
   const stopButton = document.getElementById("stop-camera");
@@ -124,7 +152,7 @@
 
   function showInvalid(message) {
     resultBox.className = "qr-status invalid";
-    resultBox.innerHTML = `<div class="qr-result-title">无法识别</div><div>${escapeHtml(message)}</div>`;
+    resultBox.innerHTML = `<div class="qr-result-title">${escapeHtml(text.invalidTitle)}</div><div>${escapeHtml(message)}</div>`;
     if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
   }
 
@@ -134,12 +162,12 @@
     historyList.innerHTML = history.map(entry => {
       const state = entry.found ? (entry.linked ? "linked" : "unlinked") : "not-found";
       const label = entry.found
-        ? (entry.linked ? "已连接" : "未连接")
-        : "数据库无此 SKU";
+        ? (entry.linked ? text.linked : text.unlinked)
+        : text.missing;
       const title = entry.shopify_title || entry.item_name || "";
       return `<li><span class="qr-dot ${state}"></span><b>${escapeHtml(entry.sku)}</b> · ${label}${title ? ` · ${escapeHtml(title)}` : ""}</li>`;
     }).join("");
-    countLabel.textContent = `${history.length} 件`;
+    countLabel.textContent = `${history.length}${text.itemsSuffix}`;
   }
 
   async function lookupSku(sku) {
@@ -149,7 +177,7 @@
     lastSku = sku;
     lastScanAt = now;
     resultBox.className = "qr-status checking";
-    resultBox.innerHTML = `<div class="qr-result-title">正在查询</div><div class="qr-sku">${escapeHtml(sku)}</div>`;
+    resultBox.innerHTML = `<div class="qr-result-title">${escapeHtml(text.checking)}</div><div class="qr-sku">${escapeHtml(sku)}</div>`;
     try {
       const response = await fetch(`{{ url_for('qr_check_lookup') }}?sku=${encodeURIComponent(sku)}`, {
         cache: "no-store",
@@ -160,20 +188,20 @@
 
       if (!result.found) {
         resultBox.className = "qr-status not-found";
-        resultBox.innerHTML = `<div class="qr-result-title">数据库中找不到这个 SKU</div><div class="qr-sku">${escapeHtml(result.sku)}</div>`;
+        resultBox.innerHTML = `<div class="qr-result-title">${escapeHtml(text.notFoundTitle)}</div><div class="qr-sku">${escapeHtml(result.sku)}</div>`;
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
       } else if (result.linked) {
         resultBox.className = "qr-status linked";
-        resultBox.innerHTML = `<div class="qr-result-title">✓ 已成功连接 Shopify</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;"><b>Shopify 商品名：</b>${escapeHtml(result.shopify_title || "（数据库中没有商品名）")}</div>`;
+        resultBox.innerHTML = `<div class="qr-result-title">${escapeHtml(text.connectedTitle)}</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;"><b>${escapeHtml(text.shopifyTitle)}</b> ${escapeHtml(result.shopify_title || text.noShopifyTitle)}</div>`;
         if (navigator.vibrate) navigator.vibrate(70);
       } else {
         resultBox.className = "qr-status unlinked";
-        resultBox.innerHTML = `<div class="qr-result-title">未连接 Shopify</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;">${escapeHtml(result.item_name || "")}</div>`;
+        resultBox.innerHTML = `<div class="qr-result-title">${escapeHtml(text.unlinkedTitle)}</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;">${escapeHtml(result.item_name || "")}</div>`;
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
       }
       addHistory(result);
     } catch (error) {
-      showInvalid(error.message || "数据库查询失败，请重试。");
+      showInvalid(error.message || text.lookupFailed);
     } finally {
       window.setTimeout(() => { lookupBusy = false; }, 450);
     }
@@ -182,7 +210,7 @@
   function onScanSuccess(decodedText) {
     const sku = skuFromQr(decodedText);
     if (!sku) {
-      showInvalid("这不是 luxuryevermore.com/{SKU} 格式的 QR Code。");
+      showInvalid(text.wrongQr);
       return;
     }
     lookupSku(sku);
@@ -191,10 +219,10 @@
   async function startCamera() {
     if (cameraRunning) return;
     if (typeof Html5Qrcode === "undefined") {
-      cameraMessage.textContent = "扫码组件加载失败，请刷新页面或使用手动查询。";
+      cameraMessage.textContent = text.componentFailed;
       return;
     }
-    cameraMessage.textContent = "正在请求摄像头权限…";
+    cameraMessage.textContent = text.requestingCamera;
     startButton.disabled = true;
     try {
       scanner = scanner || new Html5Qrcode(readerId, false);
@@ -205,13 +233,13 @@
         () => {}
       );
       cameraRunning = true;
-      cameraMessage.textContent = "后置摄像头已开启，请将 QR Code 放入框内。";
+      cameraMessage.textContent = text.cameraReady;
       startButton.disabled = true;
       stopButton.disabled = false;
     } catch (error) {
       startButton.disabled = false;
       stopButton.disabled = true;
-      cameraMessage.textContent = "无法自动开启摄像头，请允许权限后点击开启；也可使用手动查询。";
+      cameraMessage.textContent = text.cameraDenied;
     }
   }
 
@@ -221,14 +249,14 @@
     cameraRunning = false;
     startButton.disabled = false;
     stopButton.disabled = true;
-    cameraMessage.textContent = "摄像头已停止。";
+    cameraMessage.textContent = text.cameraStopped;
   }
 
   manualForm.addEventListener("submit", event => {
     event.preventDefault();
     const sku = skuFromManual(manualValue.value);
     if (!sku) {
-      showInvalid("请输入有效 SKU，或粘贴 luxuryevermore.com/{SKU} 链接。");
+      showInvalid(text.invalidManual);
       return;
     }
     lookupSku(sku);

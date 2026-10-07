@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>库存管理 MVP</title>
   <meta name="csrf-token" content="{{ csrf_token }}">
   <style>
@@ -156,6 +157,126 @@
       font-weight: revert;
     }
     hr { border: 0; border-top: 1px solid var(--border); }
+
+    /* Tables keep their desktop layout and scroll inside their own area on phones. */
+    .table-scroll {
+      width: 100%;
+      max-width: 100%;
+    }
+
+    @media (max-width: 720px) {
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 10px;
+        padding-bottom: env(safe-area-inset-bottom);
+        overflow-x: hidden;
+      }
+
+      nav {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+        padding-bottom: 10px;
+        margin-bottom: 14px;
+      }
+      nav a {
+        display: flex;
+        min-height: 42px;
+        margin: 0;
+        padding: 7px 9px;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        text-align: center;
+        text-decoration: none;
+        line-height: 1.25;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+      }
+      nav a:only-child { grid-column: 1 / -1; }
+      nav > span {
+        grid-column: 1 / -1;
+        padding: 3px 1px 0;
+        overflow-wrap: anywhere;
+      }
+
+      h1 { font-size: 25px; }
+      h2 { margin-top: 10px; font-size: 22px; line-height: 1.3; }
+      h3 { margin-top: 21px; font-size: 18px; line-height: 1.35; }
+      h4 { line-height: 1.35; }
+      p, li, a { overflow-wrap: anywhere; }
+      img { max-width: 100%; }
+
+      .row,
+      .plain-form .row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 9px;
+      }
+      label {
+        display: block;
+        margin-bottom: 3px;
+      }
+      input:not([type="hidden"]), select, textarea {
+        max-width: 100%;
+        min-height: 42px;
+        font-size: 16px;
+      }
+      textarea { min-height: 96px; }
+      button, .btn {
+        min-height: 40px;
+        max-width: 100%;
+        white-space: normal;
+      }
+      a.btn {
+        box-sizing: border-box;
+        text-align: center;
+      }
+      form p { margin-top: 12px; }
+
+      .msg { overflow-wrap: anywhere; }
+      .item-summary { padding: 9px 10px; }
+      .item-summary p { line-height: 1.55; }
+
+      /* Existing action rows use inline flex styles; allow them to wrap on phones. */
+      div[style*="display:flex"],
+      p[style*="display:flex"] {
+        flex-wrap: wrap !important;
+      }
+      div[style*="justify-content:flex-end"] {
+        justify-content: flex-start !important;
+      }
+
+      .table-scroll {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+      }
+      .table-scroll table {
+        min-width: 720px;
+        margin: -1px;
+        width: calc(100% + 2px);
+      }
+      .table-scroll th,
+      .table-scroll td {
+        max-width: 260px;
+        overflow-wrap: anywhere;
+      }
+
+      #editModal > div {
+        width: calc(100% - 24px) !important;
+        max-height: calc(100dvh - 24px);
+        padding: 16px !important;
+        box-sizing: border-box;
+        overflow-y: auto;
+      }
+
+      canvas {
+        max-width: 100% !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -207,16 +328,31 @@
 
   {% block content %}{% endblock %}
   <script>
-    async function settleConsignmentPayout(endpoint, itemName, currency) {
-      const value = prompt(`Consignment fee for ${itemName} (${currency}):`);
+    // Give every data table a local horizontal scroller on narrow screens.
+    document.querySelectorAll("table").forEach((table) => {
+      if (table.parentElement && table.parentElement.classList.contains("table-scroll")) return;
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-scroll";
+      wrapper.setAttribute("role", "region");
+      wrapper.setAttribute("aria-label", "可横向滚动的数据表格");
+      wrapper.tabIndex = 0;
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    });
+
+    async function settleConsignmentPayout(endpoint, itemName, currency, payoutOnly = false) {
+      const value = prompt(`Enter Payout for customer — ${itemName} (${currency}):`);
       if (value === null) return;
-      const fee = value.trim();
-      if (!/^\d+(\.\d{1,2})?$/.test(fee)) {
+      const payout = value.trim();
+      if (!/^\d+(\.\d{1,2})?$/.test(payout)) {
         alert("Please enter a valid non-negative amount with up to 2 decimal places.");
         return;
       }
       const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
-      const body = new URLSearchParams({ consignment_fee: fee });
+      const body = new URLSearchParams({
+        payout_for_customer: payout,
+        payout_only: payoutOnly ? "1" : "0"
+      });
       try {
         const response = await fetch(endpoint, {
           method: "POST",
@@ -233,7 +369,9 @@
         const blob = await response.blob();
         const disposition = response.headers.get("Content-Disposition") || "";
         const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
-        const filename = match ? decodeURIComponent(match[1]) : "consignment_settlement.docx";
+        const filename = match
+          ? decodeURIComponent(match[1])
+          : (payoutOnly ? "customer_payout.docx" : "consignment_settlement.docx");
         const downloadUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = downloadUrl;

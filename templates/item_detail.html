@@ -95,6 +95,7 @@
     </a>
     {% if item.source_type == "CONSIGNMENT" %}
       <button class="btn" type="button" onclick='settleConsignmentPayout({{ url_for("item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }})'>Settle Consignment Payout</button>
+      <button class="btn" type="button" onclick='settleConsignmentPayout({{ url_for("item_consignment_settlement", item_id=item._id|string)|tojson }}, {{ item.name|tojson }}, {{ (item._sold.sold_currency or item.listing_currency or "SGD")|tojson }}, true)'>Settle Payout for Customer</button>
     {% endif %}
     <button class="btn" type="button" onclick="restoreReceivedFromSold('{{ item._id }}', '{{ item.name|e }}')">
       还原为 已到店
