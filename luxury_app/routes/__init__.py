@@ -7,6 +7,7 @@ from .users import register as register_users
 from .audit import register as register_audit
 from .management import register as register_management
 from .notes import register as register_notes
+from .qr_check import register as register_qr_check
 
 
 def register_all(
@@ -41,5 +42,6 @@ def register_all(
     register_sales(app, items, audit_logs=audit_logs)
     register_analytics(app, items)
     register_notes(app, notes)
+    register_qr_check(app, items)
 
 

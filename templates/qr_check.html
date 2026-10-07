@@ -1,0 +1,246 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .qr-page { max-width: 620px; margin: 0 auto; }
+  .qr-page h2 { margin-bottom: 6px; }
+  .qr-intro { margin-top: 0; }
+  .qr-camera {
+    overflow: hidden;
+    background: #111;
+    border-radius: 8px;
+    min-height: 280px;
+  }
+  #qr-reader { width: 100%; }
+  #qr-reader video { object-fit: cover; }
+  .qr-controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 10px 0 14px;
+  }
+  .qr-status {
+    margin: 14px 0;
+    padding: 18px;
+    border: 1px solid #d7d7d7;
+    border-radius: 8px;
+    background: #f7f7f7;
+  }
+  .qr-status.linked { background: #dff3e5; border-color: #83bc91; }
+  .qr-status.unlinked { background: #fff2cc; border-color: #d5aa43; }
+  .qr-status.not-found, .qr-status.invalid { background: #f7dfdf; border-color: #cc8585; }
+  .qr-status.checking { background: #e8eef5; border-color: #9bacc0; }
+  .qr-result-title { font-size: 21px; font-weight: 700; margin-bottom: 7px; }
+  .qr-sku { font-size: 18px; font-weight: 700; letter-spacing: .06em; }
+  .qr-manual { display: flex; gap: 8px; margin: 12px 0; }
+  .qr-manual input { flex: 1; min-width: 0; }
+  .qr-history { padding-left: 0; list-style: none; }
+  .qr-history li { padding: 8px 0; border-bottom: 1px solid #e3e3e3; }
+  .qr-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:7px; }
+  .qr-dot.linked { background:#2f8a49; }
+  .qr-dot.unlinked { background:#c58b00; }
+  .qr-dot.not-found { background:#b84040; }
+  @media (max-width: 640px) {
+    .qr-page { width: 100%; }
+    .qr-camera { min-height: 250px; }
+    .qr-status { padding: 16px; }
+  }
+</style>
+
+<div class="qr-page">
+  <h2>QR查链接</h2>
+  <p class="muted qr-intro">扫描商品上的 luxuryevermore.com/{SKU} QR Code，立即检查数据库中的 Shopify 连接状态。</p>
+
+  <div class="qr-camera"><div id="qr-reader"></div></div>
+  <div class="qr-controls">
+    <button class="btn" id="start-camera" type="button">开启后置摄像头</button>
+    <button class="btn" id="stop-camera" type="button" disabled>停止摄像头</button>
+    <span class="muted" id="camera-message">正在请求摄像头权限…</span>
+  </div>
+
+  <form class="qr-manual" id="manual-form">
+    <input id="manual-value" autocomplete="off" placeholder="也可以输入 SKU 或粘贴 QR 链接">
+    <button class="btn" type="submit">查询</button>
+  </form>
+
+  <div class="qr-status" id="qr-status" aria-live="polite">
+    <div class="qr-result-title">等待扫描</div>
+    <div class="muted">摄像头识别后会在这里显示结果。</div>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+    <h3>本次扫描</h3>
+    <span class="muted" id="scan-count">0 件</span>
+  </div>
+  <ul class="qr-history" id="qr-history"><li class="muted">尚无记录</li></ul>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(() => {
+  const readerId = "qr-reader";
+  const startButton = document.getElementById("start-camera");
+  const stopButton = document.getElementById("stop-camera");
+  const cameraMessage = document.getElementById("camera-message");
+  const resultBox = document.getElementById("qr-status");
+  const historyList = document.getElementById("qr-history");
+  const countLabel = document.getElementById("scan-count");
+  const manualForm = document.getElementById("manual-form");
+  const manualValue = document.getElementById("manual-value");
+
+  let scanner = null;
+  let cameraRunning = false;
+  let lookupBusy = false;
+  let lastSku = "";
+  let lastScanAt = 0;
+  const history = [];
+
+  function escapeHtml(value) {
+    const element = document.createElement("div");
+    element.textContent = value == null ? "" : String(value);
+    return element.innerHTML;
+  }
+
+  function skuFromQr(rawValue) {
+    const value = String(rawValue || "").trim();
+    try {
+      const url = new URL(value);
+      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (hostname !== "luxuryevermore.com" || parts.length !== 1) return "";
+      const sku = decodeURIComponent(parts[0]).trim().toUpperCase();
+      return /^[A-Z0-9_-]{2,64}$/.test(sku) ? sku : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function skuFromManual(rawValue) {
+    return skuFromQr(rawValue) || (
+      /^[A-Z0-9_-]{2,64}$/.test(String(rawValue || "").trim().toUpperCase())
+        ? String(rawValue).trim().toUpperCase()
+        : ""
+    );
+  }
+
+  function showInvalid(message) {
+    resultBox.className = "qr-status invalid";
+    resultBox.innerHTML = `<div class="qr-result-title">无法识别</div><div>${escapeHtml(message)}</div>`;
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+  }
+
+  function addHistory(result) {
+    history.unshift(result);
+    if (history.length > 20) history.pop();
+    historyList.innerHTML = history.map(entry => {
+      const state = entry.found ? (entry.linked ? "linked" : "unlinked") : "not-found";
+      const label = entry.found
+        ? (entry.linked ? "已连接" : "未连接")
+        : "数据库无此 SKU";
+      const title = entry.shopify_title || entry.item_name || "";
+      return `<li><span class="qr-dot ${state}"></span><b>${escapeHtml(entry.sku)}</b> · ${label}${title ? ` · ${escapeHtml(title)}` : ""}</li>`;
+    }).join("");
+    countLabel.textContent = `${history.length} 件`;
+  }
+
+  async function lookupSku(sku) {
+    const now = Date.now();
+    if (lookupBusy || (sku === lastSku && now - lastScanAt < 2500)) return;
+    lookupBusy = true;
+    lastSku = sku;
+    lastScanAt = now;
+    resultBox.className = "qr-status checking";
+    resultBox.innerHTML = `<div class="qr-result-title">正在查询</div><div class="qr-sku">${escapeHtml(sku)}</div>`;
+    try {
+      const response = await fetch(`{{ url_for('qr_check_lookup') }}?sku=${encodeURIComponent(sku)}`, {
+        cache: "no-store",
+        headers: { "Accept": "application/json" }
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || "Lookup failed");
+
+      if (!result.found) {
+        resultBox.className = "qr-status not-found";
+        resultBox.innerHTML = `<div class="qr-result-title">数据库中找不到这个 SKU</div><div class="qr-sku">${escapeHtml(result.sku)}</div>`;
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+      } else if (result.linked) {
+        resultBox.className = "qr-status linked";
+        resultBox.innerHTML = `<div class="qr-result-title">✓ 已成功连接 Shopify</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;"><b>Shopify 商品名：</b>${escapeHtml(result.shopify_title || "（数据库中没有商品名）")}</div>`;
+        if (navigator.vibrate) navigator.vibrate(70);
+      } else {
+        resultBox.className = "qr-status unlinked";
+        resultBox.innerHTML = `<div class="qr-result-title">未连接 Shopify</div><div class="qr-sku">${escapeHtml(result.sku)}</div><div style="margin-top:7px;">${escapeHtml(result.item_name || "")}</div>`;
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+      }
+      addHistory(result);
+    } catch (error) {
+      showInvalid(error.message || "数据库查询失败，请重试。");
+    } finally {
+      window.setTimeout(() => { lookupBusy = false; }, 450);
+    }
+  }
+
+  function onScanSuccess(decodedText) {
+    const sku = skuFromQr(decodedText);
+    if (!sku) {
+      showInvalid("这不是 luxuryevermore.com/{SKU} 格式的 QR Code。");
+      return;
+    }
+    lookupSku(sku);
+  }
+
+  async function startCamera() {
+    if (cameraRunning) return;
+    if (typeof Html5Qrcode === "undefined") {
+      cameraMessage.textContent = "扫码组件加载失败，请刷新页面或使用手动查询。";
+      return;
+    }
+    cameraMessage.textContent = "正在请求摄像头权限…";
+    startButton.disabled = true;
+    try {
+      scanner = scanner || new Html5Qrcode(readerId, false);
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 15, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        onScanSuccess,
+        () => {}
+      );
+      cameraRunning = true;
+      cameraMessage.textContent = "后置摄像头已开启，请将 QR Code 放入框内。";
+      startButton.disabled = true;
+      stopButton.disabled = false;
+    } catch (error) {
+      startButton.disabled = false;
+      stopButton.disabled = true;
+      cameraMessage.textContent = "无法自动开启摄像头，请允许权限后点击开启；也可使用手动查询。";
+    }
+  }
+
+  async function stopCamera() {
+    if (!scanner || !cameraRunning) return;
+    try { await scanner.stop(); } catch (_) {}
+    cameraRunning = false;
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    cameraMessage.textContent = "摄像头已停止。";
+  }
+
+  manualForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const sku = skuFromManual(manualValue.value);
+    if (!sku) {
+      showInvalid("请输入有效 SKU，或粘贴 luxuryevermore.com/{SKU} 链接。");
+      return;
+    }
+    lookupSku(sku);
+    manualValue.select();
+  });
+  startButton.addEventListener("click", startCamera);
+  stopButton.addEventListener("click", stopCamera);
+  window.addEventListener("beforeunload", () => {
+    if (scanner && cameraRunning) scanner.stop().catch(() => {});
+  });
+
+  startCamera();
+})();
+</script>
+{% endblock %}
