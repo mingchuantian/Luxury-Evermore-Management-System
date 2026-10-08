@@ -1,9 +1,7 @@
 import unittest
-from io import BytesIO
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from flask import Flask
-from werkzeug.datastructures import FileStorage
 
 from luxury_app.routes.shopify_files import register
 from luxury_app.shopify_files import (
@@ -12,19 +10,13 @@ from luxury_app.shopify_files import (
     MAX_IMAGE_BYTES,
     STAGED_UPLOAD_MUTATION,
     _wait_for_file_status,
-    upload_image_to_shopify,
-    validate_image_upload,
+    create_shopify_content_file,
+    create_staged_image_upload,
+    validate_image_metadata,
 )
 
 
 class ShopifyFilesTests(unittest.TestCase):
-    def _image(self, name="ABC123-1.jpg", content=b"image-data"):
-        return FileStorage(
-            stream=BytesIO(content),
-            filename=name,
-            content_type="image/jpeg",
-        )
-
     def test_staged_upload_then_creates_content_file(self):
         gql_responses = [
             {
@@ -47,15 +39,16 @@ class ShopifyFilesTests(unittest.TestCase):
                 }
             },
         ]
-        storage_response = Mock(status_code=204)
         with patch(
             "luxury_app.shopify_files.shopify_gql",
             side_effect=gql_responses,
-        ) as gql, patch(
-            "luxury_app.shopify_files.requests.post",
-            return_value=storage_response,
-        ) as storage_post:
-            result = upload_image_to_shopify(self._image())
+        ) as gql:
+            staged = create_staged_image_upload(
+                "ABC123-1.jpg", "image/jpeg", 10
+            )
+            result = create_shopify_content_file(
+                staged["target"]["resourceUrl"], staged["metadata"]
+            )
 
         self.assertEqual(result["file_status"], "READY")
         self.assertEqual(result["shopify_file_id"], "gid://shopify/MediaImage/1")
@@ -67,23 +60,19 @@ class ShopifyFilesTests(unittest.TestCase):
         self.assertEqual(
             gql.call_args_list[1].args[1]["files"][0]["contentType"], "IMAGE"
         )
-        self.assertEqual(storage_post.call_count, 1)
+        self.assertEqual(
+            gql.call_args_list[1].args[1]["files"][0]["originalSource"],
+            "https://shopify.example.test/staged.jpg",
+        )
 
     def test_validation_rejects_bad_type_and_oversize(self):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
-            validate_image_upload(FileStorage(
-                stream=BytesIO(b"x"),
-                filename="document.pdf",
-                content_type="application/pdf",
-            ))
+            validate_image_metadata("document.pdf", "application/pdf", 1)
 
-        oversized = Mock()
-        oversized.filename = "large.jpg"
-        oversized.mimetype = "image/jpeg"
-        oversized.stream = Mock()
-        oversized.stream.tell.side_effect = [0, MAX_IMAGE_BYTES + 1]
         with self.assertRaisesRegex(ValueError, "20 MB"):
-            validate_image_upload(oversized)
+            validate_image_metadata(
+                "large.jpg", "image/jpeg", MAX_IMAGE_BYTES + 1
+            )
 
     def test_processing_file_is_briefly_polled_until_ready(self):
         with patch(
@@ -105,7 +94,7 @@ class ShopifyFilesTests(unittest.TestCase):
         self.assertEqual(result["fileStatus"], "READY")
         self.assertEqual(gql.call_args.args[0], FILE_STATUS_QUERY)
 
-    def test_page_and_single_image_endpoint(self):
+    def test_page_and_direct_upload_endpoints(self):
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret"
 
@@ -117,7 +106,30 @@ class ShopifyFilesTests(unittest.TestCase):
         with app.test_client() as client:
             page = client.get("/shopify/files/bulk-upload")
             with patch(
-                "luxury_app.routes.shopify_files.upload_image_to_shopify",
+                "luxury_app.routes.shopify_files.create_staged_image_upload",
+                return_value={
+                    "metadata": {
+                        "filename": "ABC.jpg",
+                        "mime_type": "image/jpeg",
+                        "size": 10,
+                    },
+                    "target": {
+                        "url": "https://upload.example.test",
+                        "resourceUrl": "https://shopify.example.test/staged.jpg",
+                        "parameters": [{"name": "key", "value": "tmp/key"}],
+                    },
+                },
+            ):
+                stage_response = client.post(
+                    "/shopify/files/bulk-upload/stage",
+                    json={
+                        "filename": "ABC.jpg",
+                        "mime_type": "image/jpeg",
+                        "size": 10,
+                    },
+                )
+            with patch(
+                "luxury_app.routes.shopify_files.create_shopify_content_file",
                 return_value={
                     "filename": "ABC.jpg",
                     "size": 10,
@@ -125,16 +137,18 @@ class ShopifyFilesTests(unittest.TestCase):
                     "file_status": "PROCESSING",
                 },
             ):
-                response = client.post(
-                    "/shopify/files/bulk-upload/one",
-                    data={"image": (BytesIO(b"image"), "ABC.jpg")},
-                    content_type="multipart/form-data",
+                complete_response = client.post(
+                    "/shopify/files/bulk-upload/complete",
+                    json={"upload_token": stage_response.json["upload_token"]},
                 )
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'id="image-input"', page.data)
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json["ok"])
+        self.assertIn(b"/shopify/files/bulk-upload/stage", page.data)
+        self.assertEqual(stage_response.status_code, 200)
+        self.assertTrue(stage_response.json["ok"])
+        self.assertEqual(complete_response.status_code, 200)
+        self.assertTrue(complete_response.json["ok"])
 
 
 if __name__ == "__main__":

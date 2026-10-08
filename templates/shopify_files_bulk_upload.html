@@ -33,9 +33,9 @@
   <h2>{{ "Bulk Upload Images to Shopify" if management_ui else "批量图传 Shopify" }}</h2>
   <p class="muted">
     {% if management_ui %}
-      Upload images directly to Shopify Content &gt; Files. Images are not linked to products automatically.
+      Upload images directly from this browser to Shopify Content &gt; Files. Images are not linked to products automatically.
     {% else %}
-      将图片批量上传到 Shopify「Content &gt; Files」。系统不会自动把图片关联到商品，上传后可在 Shopify 后台手动选择。
+      图片会从当前浏览器直接上传到 Shopify「Content &gt; Files」，不再经过本 Web App。系统不会自动把图片关联到商品，上传后可在 Shopify 后台手动选择。
     {% endif %}
   </p>
 
@@ -83,8 +83,10 @@
     "success": "uploaded" if management_ui else "上传成功",
     "failed": "failed" if management_ui else "失败",
     "waiting": "Waiting" if management_ui else "等待上传",
-    "sending": "Sending to server" if management_ui else "正在传到服务器",
-    "shopify": "Uploading to Shopify" if management_ui else "正在上传到 Shopify",
+    "requesting": "Preparing a secure Shopify upload" if management_ui else "正在申请 Shopify 上传通道",
+    "shopify": "Uploading directly to Shopify" if management_ui else "正在直传 Shopify",
+    "registering": "Adding to Shopify Content" if management_ui else "正在写入 Shopify Content",
+    "fallback": "Switching to compatible direct upload" if management_ui else "正在切换兼容上传方式",
     "done": "Added to Shopify Content" if management_ui else "已加入 Shopify Content",
     "network": "Network error. Retry this image." if management_ui else "网络错误，请重试这张图片。",
     "badType": "Unsupported image type" if management_ui else "不支持的图片格式",
@@ -92,7 +94,8 @@
     "duplicate": "Already in the list" if management_ui else "已在列表中",
     "complete": "Upload complete" if management_ui else "本次上传完成"
   })|tojson }};
-  const endpoint = {{ url_for("shopify_files_bulk_upload_one")|tojson }};
+  const stageEndpoint = {{ url_for("shopify_files_bulk_upload_stage")|tojson }};
+  const completeEndpoint = {{ url_for("shopify_files_bulk_upload_complete")|tojson }};
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const input = document.getElementById("image-input");
   const dropzone = document.getElementById("upload-dropzone");
@@ -176,57 +179,102 @@
     updateSummary();
   }
 
-  function uploadOne(entry) {
-    return new Promise(resolve => {
-      entry.state = "uploading";
-      entry.progress = 2;
-      entry.message = ui.sending;
-      updateRow(entry);
-      updateSummary();
+  async function postJson(url, payload) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrf},
+      body: JSON.stringify(payload)
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || `HTTP ${response.status}`);
+    }
+    return data;
+  }
 
+  function stagedBody(target, file) {
+    const body = new FormData();
+    for (const parameter of (target.parameters || [])) {
+      body.append(parameter.name, parameter.value);
+    }
+    body.append("file", file, file.name);
+    return body;
+  }
+
+  function xhrToShopify(target, entry) {
+    return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      const body = new FormData();
-      body.append("image", entry.file, entry.file.name);
-      xhr.open("POST", endpoint);
-      xhr.setRequestHeader("X-CSRF-Token", csrf);
+      xhr.open("POST", target.url);
       xhr.upload.onprogress = event => {
         if (!event.lengthComputable) return;
-        entry.progress = Math.max(2, Math.round((event.loaded / event.total) * 70));
-        updateRow(entry);
-        updateSummary();
-      };
-      xhr.upload.onload = () => {
-        entry.progress = 75;
-        entry.message = ui.shopify;
+        entry.progress = 10 + Math.round((event.loaded / event.total) * 70);
         updateRow(entry);
         updateSummary();
       };
       xhr.onload = () => {
-        let payload = {};
-        try { payload = JSON.parse(xhr.responseText || "{}"); } catch (_) {}
-        if (xhr.status >= 200 && xhr.status < 300 && payload.ok) {
-          entry.state = "success";
-          entry.progress = 100;
-          entry.message = `${ui.done} (${payload.file_status || "PROCESSING"})`;
-        } else {
-          entry.state = "failed";
-          entry.progress = 100;
-          entry.message = payload.message || `HTTP ${xhr.status}`;
-        }
-        updateRow(entry);
-        updateSummary();
-        resolve();
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Shopify storage HTTP ${xhr.status}`));
       };
-      xhr.onerror = () => {
-        entry.state = "failed";
-        entry.progress = 100;
-        entry.message = ui.network;
-        updateRow(entry);
-        updateSummary();
-        resolve();
-      };
-      xhr.send(body);
+      xhr.onerror = () => reject(new TypeError("Direct upload CORS/network error"));
+      xhr.send(stagedBody(target, entry.file));
     });
+  }
+
+  async function sendToShopify(target, entry) {
+    try {
+      await xhrToShopify(target, entry);
+    } catch (error) {
+      // Some Shopify storage targets accept browser POSTs without exposing a
+      // CORS-readable response. A no-cors retry keeps the bytes off our server;
+      // fileCreate below is the authoritative success check.
+      if (!(error instanceof TypeError)) throw error;
+      entry.progress = 40;
+      entry.message = ui.fallback;
+      updateRow(entry);
+      updateSummary();
+      await fetch(target.url, {
+        method: "POST",
+        mode: "no-cors",
+        body: stagedBody(target, entry.file)
+      });
+    }
+  }
+
+  async function uploadOne(entry) {
+    entry.state = "uploading";
+    entry.progress = 2;
+    entry.message = ui.requesting;
+    updateRow(entry);
+    updateSummary();
+    try {
+      const staged = await postJson(stageEndpoint, {
+        filename: entry.file.name,
+        mime_type: entry.file.type,
+        size: entry.file.size
+      });
+      entry.progress = 10;
+      entry.message = ui.shopify;
+      updateRow(entry);
+      updateSummary();
+      await sendToShopify(staged.target, entry);
+      entry.progress = 85;
+      entry.message = ui.registering;
+      updateRow(entry);
+      updateSummary();
+      const completed = await postJson(completeEndpoint, {
+        upload_token: staged.upload_token
+      });
+      entry.state = "success";
+      entry.progress = 100;
+      entry.message = `${ui.done} (${completed.file_status || "PROCESSING"})`;
+    } catch (error) {
+      entry.state = "failed";
+      entry.progress = 100;
+      entry.message = error.message || ui.network;
+    }
+    updateRow(entry);
+    updateSummary();
   }
 
   async function runQueue() {

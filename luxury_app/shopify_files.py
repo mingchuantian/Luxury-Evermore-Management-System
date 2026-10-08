@@ -6,8 +6,6 @@ import threading
 import time
 from typing import Any, Dict
 
-import requests
-
 from .shopify_maintenance import shopify_gql
 
 
@@ -82,10 +80,12 @@ def _clean_filename(value: str) -> str:
     return filename
 
 
-def validate_image_upload(file_storage) -> Dict[str, Any]:
-    filename = _clean_filename(getattr(file_storage, "filename", ""))
+def validate_image_metadata(
+    filename_value: str, mime_value: str, size_value: Any
+) -> Dict[str, Any]:
+    filename = _clean_filename(filename_value)
     extension = os.path.splitext(filename)[1].lower()
-    supplied_mime = (getattr(file_storage, "mimetype", "") or "").lower()
+    supplied_mime = (mime_value or "").lower()
     if extension not in ALLOWED_EXTENSIONS:
         raise ValueError(
             "Unsupported image type. Use JPEG, PNG, WEBP, HEIC, or GIF."
@@ -98,11 +98,10 @@ def validate_image_upload(file_storage) -> Dict[str, Any]:
         else MIME_BY_EXTENSION[extension]
     )
 
-    stream = file_storage.stream
-    current_position = stream.tell()
-    stream.seek(0, os.SEEK_END)
-    size = stream.tell()
-    stream.seek(current_position)
+    try:
+        size = int(size_value)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid image size.")
     if size <= 0:
         raise ValueError("The image is empty.")
     if size > MAX_IMAGE_BYTES:
@@ -142,42 +141,6 @@ def _create_staged_target(filename: str, mime_type: str) -> Dict[str, Any]:
             "Shopify did not return an image upload target."
         )
     return targets[0]
-
-
-def _send_to_staged_target(target, file_storage, metadata):
-    parameters = target.get("parameters") or []
-    form_fields = {
-        str(parameter.get("name")): str(parameter.get("value"))
-        for parameter in parameters
-        if parameter.get("name") is not None
-    }
-    upload_url = target.get("url")
-    if not upload_url or not target.get("resourceUrl"):
-        raise ShopifyFileUploadError("Shopify returned an incomplete upload target.")
-
-    file_storage.stream.seek(0)
-    try:
-        response = requests.post(
-            upload_url,
-            data=form_fields,
-            files={
-                "file": (
-                    metadata["filename"],
-                    file_storage.stream,
-                    metadata["mime_type"],
-                )
-            },
-            timeout=(20, 180),
-        )
-    except requests.RequestException as exc:
-        raise ShopifyFileUploadError(
-            "The image could not be transferred to Shopify storage."
-        ) from exc
-    if response.status_code not in (200, 201, 204):
-        raise ShopifyFileUploadError(
-            "Shopify storage rejected the image "
-            f"(HTTP {response.status_code})."
-        )
 
 
 def _create_shopify_file(target, metadata) -> Dict[str, Any]:
@@ -230,14 +193,33 @@ def _wait_for_file_status(created: Dict[str, Any]) -> Dict[str, Any]:
     return created
 
 
-def upload_image_to_shopify(file_storage) -> Dict[str, Any]:
-    """Upload one image without retaining a server-side copy."""
-    metadata = validate_image_upload(file_storage)
+def create_staged_image_upload(
+    filename: str, mime_type: str, size: Any
+) -> Dict[str, Any]:
+    """Return a temporary Shopify target; image bytes bypass this web app."""
+    metadata = validate_image_metadata(filename, mime_type, size)
     with SHOPIFY_FILE_UPLOAD_SLOTS:
         target = _create_staged_target(
             metadata["filename"], metadata["mime_type"]
         )
-        _send_to_staged_target(target, file_storage, metadata)
+    if not target.get("url") or not target.get("resourceUrl"):
+        raise ShopifyFileUploadError("Shopify returned an incomplete upload target.")
+    return {"metadata": metadata, "target": target}
+
+
+def create_shopify_content_file(
+    resource_url: str, metadata: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Register a browser-uploaded staged image in Content > Files."""
+    if not resource_url:
+        raise ValueError("Missing Shopify staged resource URL.")
+    metadata = validate_image_metadata(
+        metadata.get("filename"),
+        metadata.get("mime_type"),
+        metadata.get("size"),
+    )
+    with SHOPIFY_FILE_UPLOAD_SLOTS:
+        target = {"resourceUrl": resource_url}
         created = _create_shopify_file(target, metadata)
         created = _wait_for_file_status(created)
     return {
