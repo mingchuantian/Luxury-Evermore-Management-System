@@ -286,6 +286,7 @@
         <a href="{{ url_for('management_index') }}">Dashboard</a>
         <a href="{{ url_for('management_list_items') }}">Items</a>
         <a href="/qr-check">QR Lookup</a>
+        <a href="/shopify/files/bulk-upload">Bulk Upload to Shopify</a>
         <a href="{{ url_for('management_item_new_buyin_form') }}">Add Buy-In</a>
         <a href="{{ url_for('management_item_new_consignment_form') }}">Add Consignment</a>
         <span class="muted">User: {{ session.get("username") }} ({{ session.get("role") }})</span>
@@ -294,6 +295,7 @@
         <a href="{{ url_for('index') }}">仪表盘</a>
         <a href="{{ url_for('list_items') }}">库存列表</a>
         <a href="/qr-check">QR查链接</a>
+        <a href="/shopify/files/bulk-upload">批量图传Shopify</a>
         <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
         <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
         <span class="muted">当前：{{ session.get("username") }}（{{ session.get("role") }}）</span>
@@ -302,6 +304,7 @@
         <a href="{{ url_for('index') }}">仪表盘</a>
         <a href="{{ url_for('list_items') }}">库存列表</a>
         <a href="/qr-check">QR查链接</a>
+        <a href="/shopify/files/bulk-upload">批量图传Shopify</a>
         <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
         <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
         <a href="{{ url_for('analytics') }}">数据分析</a>

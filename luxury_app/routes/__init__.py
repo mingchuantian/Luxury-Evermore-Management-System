@@ -8,6 +8,7 @@ from .audit import register as register_audit
 from .management import register as register_management
 from .notes import register as register_notes
 from .qr_check import register as register_qr_check
+from .shopify_files import register as register_shopify_files
 
 
 def register_all(
@@ -43,5 +44,6 @@ def register_all(
     register_analytics(app, items)
     register_notes(app, notes)
     register_qr_check(app, items)
+    register_shopify_files(app)
 
 

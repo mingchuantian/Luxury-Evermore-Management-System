@@ -8,7 +8,8 @@ excluded. By default, a complete synchronization runs every hour.
 ## Shopify Dev Dashboard
 
 1. Create the app under the same Shopify organization that owns the store.
-2. Configure at least `read_products` or `write_products`. Shopify treats
+2. Configure at least `read_products` or `write_products`, plus `write_files`
+   for the bulk Content image uploader. Shopify treats
    `write_products` as implicitly granting product read access and may omit the
    redundant `read_products` entry from the issued token's scope list.
 3. Release the app configuration and install the app on the store.

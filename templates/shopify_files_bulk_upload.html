@@ -1,0 +1,278 @@
+{% extends "layout.html" %}
+{% block content %}
+{% set management_ui = session.get("role") == "Management" %}
+<style>
+  .bulk-upload-page { max-width: 980px; margin: 0 auto; }
+  .upload-dropzone {
+    padding: 28px 18px;
+    border: 2px dashed #aeb7bb;
+    border-radius: 8px;
+    background: #fff;
+    text-align: center;
+    cursor: pointer;
+  }
+  .upload-dropzone.dragging { border-color: #3e4b51; background: #eef3f5; }
+  .upload-dropzone input { display: none; }
+  .upload-actions { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+  .overall-progress { height: 13px; overflow:hidden; border-radius:7px; background:#e5e7e8; }
+  .overall-progress > span { display:block; width:0; height:100%; background:#477b59; transition:width .2s; }
+  .upload-summary { margin:8px 0 14px; }
+  .upload-list .filename { max-width:340px; overflow-wrap:anywhere; }
+  .file-progress { width:150px; height:8px; overflow:hidden; border-radius:4px; background:#e5e7e8; }
+  .file-progress span { display:block; width:0; height:100%; background:#687f8a; transition:width .15s; }
+  .upload-ok { color:#26623a; font-weight:600; }
+  .upload-failed { color:#9a3232; font-weight:600; }
+  .upload-processing { color:#435e69; font-weight:600; }
+  @media (max-width: 720px) {
+    .upload-dropzone { padding:22px 12px; }
+    .upload-actions .btn { flex:1 1 145px; }
+  }
+</style>
+
+<div class="bulk-upload-page">
+  <h2>{{ "Bulk Upload Images to Shopify" if management_ui else "批量图传 Shopify" }}</h2>
+  <p class="muted">
+    {% if management_ui %}
+      Upload images directly to Shopify Content &gt; Files. Images are not linked to products automatically.
+    {% else %}
+      将图片批量上传到 Shopify「Content &gt; Files」。系统不会自动把图片关联到商品，上传后可在 Shopify 后台手动选择。
+    {% endif %}
+  </p>
+
+  <div class="msg">
+    {% if management_ui %}
+      Keep this page open while uploading. Up to three images run at once; failed images can be retried separately. Shopify Content files are publicly accessible, so do not upload confidential or customer information.
+    {% else %}
+      上传过程中请保持本页面打开。系统最多同时处理 3 张，失败图片可以单独重试。Shopify Content 文件可公开访问，请勿上传机密资料或客户个人信息。
+    {% endif %}
+  </div>
+
+  <div class="upload-dropzone" id="upload-dropzone" tabindex="0" role="button">
+    <input id="image-input" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.heic,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif">
+    <b>{{ "Choose images or drop them here" if management_ui else "点击选择图片，或把图片拖到这里" }}</b>
+    <div class="muted">
+      {{ "JPEG, PNG, WEBP, HEIC, GIF · maximum 20 MB each · hundreds can be selected at once" if management_ui else "支持 JPEG、PNG、WEBP、HEIC、GIF；每张最大 20 MB；可一次选择数百张" }}
+    </div>
+  </div>
+
+  <div class="upload-actions">
+    <button class="btn" id="start-upload" type="button" disabled>{{ "Start Upload" if management_ui else "开始上传" }}</button>
+    <button class="btn" id="retry-upload" type="button" disabled>{{ "Retry Failed" if management_ui else "重试失败图片" }}</button>
+    <button class="btn" id="clear-list" type="button" disabled>{{ "Clear List" if management_ui else "清空列表" }}</button>
+  </div>
+
+  <div class="overall-progress" aria-label="overall upload progress"><span id="overall-progress-bar"></span></div>
+  <div class="muted upload-summary" id="upload-summary">{{ "No images selected." if management_ui else "尚未选择图片。" }}</div>
+
+  <table class="upload-list" id="upload-list" hidden>
+    <thead><tr>
+      <th>{{ "File" if management_ui else "文件" }}</th>
+      <th>{{ "Size" if management_ui else "大小" }}</th>
+      <th>{{ "Progress" if management_ui else "进度" }}</th>
+      <th>{{ "Status" if management_ui else "状态" }}</th>
+    </tr></thead>
+    <tbody id="upload-list-body"></tbody>
+  </table>
+</div>
+
+<script>
+(() => {
+  const ui = {{ ({
+    "none": "No images selected." if management_ui else "尚未选择图片。",
+    "selected": "selected" if management_ui else "已选择",
+    "success": "uploaded" if management_ui else "上传成功",
+    "failed": "failed" if management_ui else "失败",
+    "waiting": "Waiting" if management_ui else "等待上传",
+    "sending": "Sending to server" if management_ui else "正在传到服务器",
+    "shopify": "Uploading to Shopify" if management_ui else "正在上传到 Shopify",
+    "done": "Added to Shopify Content" if management_ui else "已加入 Shopify Content",
+    "network": "Network error. Retry this image." if management_ui else "网络错误，请重试这张图片。",
+    "badType": "Unsupported image type" if management_ui else "不支持的图片格式",
+    "tooLarge": "Exceeds 20 MB" if management_ui else "超过 20 MB",
+    "duplicate": "Already in the list" if management_ui else "已在列表中",
+    "complete": "Upload complete" if management_ui else "本次上传完成"
+  })|tojson }};
+  const endpoint = {{ url_for("shopify_files_bulk_upload_one")|tojson }};
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const input = document.getElementById("image-input");
+  const dropzone = document.getElementById("upload-dropzone");
+  const startButton = document.getElementById("start-upload");
+  const retryButton = document.getElementById("retry-upload");
+  const clearButton = document.getElementById("clear-list");
+  const table = document.getElementById("upload-list");
+  const tbody = document.getElementById("upload-list-body");
+  const summary = document.getElementById("upload-summary");
+  const overallBar = document.getElementById("overall-progress-bar");
+  const allowedExtensions = /\.(jpe?g|png|webp|gif|heic)$/i;
+  const entries = [];
+  const fileKeys = new Set();
+  let running = false;
+  let wakeLock = null;
+
+  function formatBytes(bytes) {
+    return bytes < 1000000
+      ? `${(bytes / 1000).toFixed(1)} KB`
+      : `${(bytes / 1000000).toFixed(1)} MB`;
+  }
+
+  function updateRow(entry) {
+    entry.progressBar.style.width = `${entry.progress}%`;
+    entry.statusCell.textContent = entry.message;
+    entry.statusCell.className = entry.state === "success"
+      ? "upload-ok"
+      : (entry.state === "failed" ? "upload-failed" : "upload-processing");
+  }
+
+  function updateSummary() {
+    const success = entries.filter(entry => entry.state === "success").length;
+    const failed = entries.filter(entry => entry.state === "failed").length;
+    const average = entries.length
+      ? entries.reduce((total, entry) => total + entry.progress, 0) / entries.length
+      : 0;
+    overallBar.style.width = `${average}%`;
+    summary.textContent = entries.length
+      ? `${entries.length} ${ui.selected} · ${success} ${ui.success} · ${failed} ${ui.failed}`
+      : ui.none;
+    const pending = entries.some(entry => entry.state === "pending");
+    startButton.disabled = running || !pending;
+    retryButton.disabled = running || failed === 0;
+    clearButton.disabled = running || entries.length === 0;
+    table.hidden = entries.length === 0;
+  }
+
+  function addFiles(files) {
+    for (const file of files) {
+      const key = `${file.name}:${file.size}:${file.lastModified}`;
+      if (fileKeys.has(key)) continue;
+      const validType = allowedExtensions.test(file.name);
+      const validSize = file.size > 0 && file.size <= 20000000;
+      const row = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      nameCell.className = "filename";
+      nameCell.textContent = file.name;
+      const sizeCell = document.createElement("td");
+      sizeCell.textContent = formatBytes(file.size);
+      const progressCell = document.createElement("td");
+      const progress = document.createElement("div");
+      progress.className = "file-progress";
+      const progressBar = document.createElement("span");
+      progress.appendChild(progressBar);
+      progressCell.appendChild(progress);
+      const statusCell = document.createElement("td");
+      row.append(nameCell, sizeCell, progressCell, statusCell);
+      tbody.appendChild(row);
+
+      const entry = {
+        file, key, progressBar, statusCell,
+        progress: validType && validSize ? 0 : 100,
+        state: validType && validSize ? "pending" : "failed",
+        message: !validType ? ui.badType : (!validSize ? ui.tooLarge : ui.waiting)
+      };
+      entries.push(entry);
+      fileKeys.add(key);
+      updateRow(entry);
+    }
+    input.value = "";
+    updateSummary();
+  }
+
+  function uploadOne(entry) {
+    return new Promise(resolve => {
+      entry.state = "uploading";
+      entry.progress = 2;
+      entry.message = ui.sending;
+      updateRow(entry);
+      updateSummary();
+
+      const xhr = new XMLHttpRequest();
+      const body = new FormData();
+      body.append("image", entry.file, entry.file.name);
+      xhr.open("POST", endpoint);
+      xhr.setRequestHeader("X-CSRF-Token", csrf);
+      xhr.upload.onprogress = event => {
+        if (!event.lengthComputable) return;
+        entry.progress = Math.max(2, Math.round((event.loaded / event.total) * 70));
+        updateRow(entry);
+        updateSummary();
+      };
+      xhr.upload.onload = () => {
+        entry.progress = 75;
+        entry.message = ui.shopify;
+        updateRow(entry);
+        updateSummary();
+      };
+      xhr.onload = () => {
+        let payload = {};
+        try { payload = JSON.parse(xhr.responseText || "{}"); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300 && payload.ok) {
+          entry.state = "success";
+          entry.progress = 100;
+          entry.message = `${ui.done} (${payload.file_status || "PROCESSING"})`;
+        } else {
+          entry.state = "failed";
+          entry.progress = 100;
+          entry.message = payload.message || `HTTP ${xhr.status}`;
+        }
+        updateRow(entry);
+        updateSummary();
+        resolve();
+      };
+      xhr.onerror = () => {
+        entry.state = "failed";
+        entry.progress = 100;
+        entry.message = ui.network;
+        updateRow(entry);
+        updateSummary();
+        resolve();
+      };
+      xhr.send(body);
+    });
+  }
+
+  async function runQueue() {
+    if (running) return;
+    const queue = entries.filter(entry => entry.state === "pending");
+    if (!queue.length) return;
+    running = true;
+    updateSummary();
+    try {
+      if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen");
+    } catch (_) {}
+    let next = 0;
+    async function worker() {
+      while (next < queue.length) {
+        const entry = queue[next++];
+        await uploadOne(entry);
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(3, queue.length)}, worker));
+    running = false;
+    if (wakeLock) { try { await wakeLock.release(); } catch (_) {} wakeLock = null; }
+    updateSummary();
+  }
+
+  input.addEventListener("change", () => addFiles(input.files));
+  dropzone.addEventListener("click", () => input.click());
+  dropzone.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); input.click(); }
+  });
+  ["dragenter", "dragover"].forEach(name => dropzone.addEventListener(name, event => {
+    event.preventDefault(); dropzone.classList.add("dragging");
+  }));
+  ["dragleave", "drop"].forEach(name => dropzone.addEventListener(name, event => {
+    event.preventDefault(); dropzone.classList.remove("dragging");
+  }));
+  dropzone.addEventListener("drop", event => addFiles(event.dataTransfer.files));
+  startButton.addEventListener("click", runQueue);
+  retryButton.addEventListener("click", () => {
+    entries.filter(entry => entry.state === "failed" && allowedExtensions.test(entry.file.name) && entry.file.size > 0 && entry.file.size <= 20000000)
+      .forEach(entry => { entry.state = "pending"; entry.progress = 0; entry.message = ui.waiting; updateRow(entry); });
+    updateSummary();
+    runQueue();
+  });
+  clearButton.addEventListener("click", () => {
+    entries.length = 0; fileKeys.clear(); tbody.replaceChildren(); updateSummary();
+  });
+})();
+</script>
+{% endblock %}
