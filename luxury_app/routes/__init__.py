@@ -18,6 +18,7 @@ def register_all(
     audit_logs,
     notes,
     management_items=None,
+    management_payments=None,
     maintenance_items=None,
     maintenance_items_view=None,
     maintenance_logs=None,
@@ -31,6 +32,7 @@ def register_all(
         management_items if management_items is not None else items,
         audit_logs=audit_logs,
         users=users,
+        management_payments=management_payments,
     )
     register_dashboard(
         app,

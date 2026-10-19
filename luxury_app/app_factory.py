@@ -65,9 +65,12 @@ def create_app():
     users = db["users"]
     audit_logs = db["audit_logs"]
     notes = db["notes"]
+    management_commission_payments = db["management_commission_payments"]
     background_jobs = db["background_jobs"]
     items_view_maintenance_logs = db["items_view_maintenance_logs"]
-    ensure_indexes(items, users, audit_logs, notes)
+    ensure_indexes(
+        items, users, audit_logs, notes, management_commission_payments
+    )
     ensure_item_indexes(items_view)
     try:
         items_view_maintenance_logs.create_index([("started_at", -1)])
@@ -86,6 +89,7 @@ def create_app():
         audit_logs,
         notes,
         management_items=items,
+        management_payments=management_commission_payments,
         maintenance_items=items,
         maintenance_items_view=items_view,
         maintenance_logs=items_view_maintenance_logs,

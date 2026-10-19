@@ -311,6 +311,7 @@
         <a href="{{ url_for('audit_history') }}">操作历史</a>
         <a href="{{ url_for('notes_list') }}">随记</a>
         {% if session.get("role") == "Admin" %}
+          <a href="{{ url_for('admin_management_payments') }}">Management付款</a>
           <a href="{{ url_for('users_list') }}">账号管理</a>
         {% endif %}
         <span class="muted">当前：{{ session.get("username") }}（{{ session.get("role") }}）</span>

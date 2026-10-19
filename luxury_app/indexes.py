@@ -38,7 +38,7 @@ def ensure_item_indexes(items):
     ])
 
 
-def ensure_indexes(items, users, audit_logs, notes):
+def ensure_indexes(items, users, audit_logs, notes, management_payments=None):
     ensure_item_indexes(items)
 
     _safe_create_index(users, [("username", ASCENDING)], unique=True)
@@ -51,5 +51,14 @@ def ensure_indexes(items, users, audit_logs, notes):
 
     _safe_create_index(notes, [("created_at", DESCENDING)])
     _safe_create_index(notes, [("username", ASCENDING)])
+
+    if management_payments is not None:
+        _safe_create_index(
+            management_payments, [("sale_key", ASCENDING)], unique=True
+        )
+        _safe_create_index(
+            management_payments,
+            [("is_paid", ASCENDING), ("sold_at", DESCENDING)],
+        )
 
 

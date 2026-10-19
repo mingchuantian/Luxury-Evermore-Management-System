@@ -1,5 +1,6 @@
 """English Management/Staff pages backed by the shared items collection."""
 
+import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from math import ceil
@@ -23,7 +24,7 @@ from consignment_receipt_template.consignment_agreement_generation import (
     generate_consignment_agreement_docx_bytes,
 )
 
-from ..auth import ROLE_MANAGEMENT, require_roles
+from ..auth import ROLE_ADMIN, ROLE_MANAGEMENT, require_roles
 from ..audit import insert_audit_logs, make_change_detail, push_item_audits
 from ..constants import (
     BRAND_OPTIONS,
@@ -46,7 +47,13 @@ def _is_object_id(value):
         return False
 
 
-def register(app, items, audit_logs=None, users=None):
+def register(
+    app,
+    items,
+    audit_logs=None,
+    users=None,
+    management_payments=None,
+):
     def _dt8_date_str(value):
         if value is None or value == "":
             return ""
@@ -140,10 +147,11 @@ def register(app, items, audit_logs=None, users=None):
         usernames = set()
         # The active Management account is authoritative even in lightweight
         # test/dev setups where the users collection is not supplied.
-        if session.get("user_id"):
-            user_ids.add(str(session["user_id"]))
-        if session.get("username"):
-            usernames.add(str(session["username"]))
+        if session.get("role") == ROLE_MANAGEMENT:
+            if session.get("user_id"):
+                user_ids.add(str(session["user_id"]))
+            if session.get("username"):
+                usernames.add(str(session["username"]))
         if users is not None:
             try:
                 for user in users.find({"role": ROLE_MANAGEMENT}):
@@ -174,7 +182,15 @@ def register(app, items, audit_logs=None, users=None):
         # compatibility rule only when no SOLD audit can be found at all.
         return item.get("ownership") == OWNERSHIP_MANAGEMENT
 
-    def _management_commission_sales(selected_month):
+    def _commission_sale_key(item, sale, sold_at):
+        raw = "|".join([
+            str(item.get("_id") or ""),
+            sold_at.astimezone(timezone.utc).isoformat(),
+            str(sale.get("receipt_no") or ""),
+        ])
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _management_commission_sales(selected_month=None):
         """Build a month-filtered ledger from sale records made by Management."""
         rows = []
         available_months = set()
@@ -206,7 +222,7 @@ def register(app, items, audit_logs=None, users=None):
                 continue
 
             available_months.add(month)
-            if month != selected_month:
+            if selected_month and month != selected_month:
                 continue
             sold_price = sale.get("sold_price") or 0
             try:
@@ -225,6 +241,8 @@ def register(app, items, audit_logs=None, users=None):
                 or "SGD"
             ).strip().upper()
             rows.append({
+                "item_id": item.get("_id"),
+                "sale_key": _commission_sale_key(item, sale, sold_at),
                 "sku": item.get("sku") or "",
                 "serial_code": item.get("serial_code") or "",
                 "name": item.get("name") or "",
@@ -241,8 +259,109 @@ def register(app, items, audit_logs=None, users=None):
                     or sale.get("management_commission_paid_at")
                 ),
             })
+
+        if management_payments is not None and rows:
+            keys = [row["sale_key"] for row in rows]
+            try:
+                payment_map = {
+                    payment.get("sale_key"): bool(payment.get("is_paid"))
+                    for payment in management_payments.find({
+                        "sale_key": {"$in": keys}
+                    })
+                }
+            except Exception:
+                app.logger.exception(
+                    "Failed to load Management commission payment states."
+                )
+                payment_map = {}
+            for row in rows:
+                if row["sale_key"] in payment_map:
+                    row["paid"] = payment_map[row["sale_key"]]
         rows.sort(key=lambda row: row["sold_at"], reverse=True)
         return rows, available_months
+
+    @app.get("/admin/management-payments")
+    @require_roles(ROLE_ADMIN)
+    def admin_management_payments():
+        current_month = now().astimezone(BUSINESS_TZ).strftime("%Y-%m")
+        selected_month = (request.args.get("month") or "").strip()
+        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", selected_month):
+            selected_month = current_month
+        payment_rows, available_months = _management_commission_sales(
+            selected_month
+        )
+        available_months.update((current_month, selected_month))
+        unpaid_totals = {}
+        for row in payment_rows:
+            if not row["paid"]:
+                unpaid_totals[row["currency"]] = (
+                    unpaid_totals.get(row["currency"], 0)
+                    + row["commission"]
+                )
+        return render_template(
+            "admin/management_payments.html",
+            payment_rows=payment_rows,
+            payment_month=selected_month,
+            payment_months=sorted(available_months, reverse=True),
+            unpaid_totals=unpaid_totals,
+        )
+
+    @app.post("/admin/management-payments/update")
+    @require_roles(ROLE_ADMIN)
+    def admin_management_payments_update():
+        if management_payments is None:
+            return "Management payment storage is unavailable", 503
+        action = (request.form.get("action") or "").strip().lower()
+        selected_keys = set(request.form.getlist("sale_key"))
+        month = (request.form.get("month") or "").strip()
+        if action not in {"paid", "unpaid"}:
+            return "Invalid payment action", 400
+        if not selected_keys:
+            flash("请至少勾选一笔佣金。", "error")
+            return redirect(url_for("admin_management_payments", month=month))
+
+        valid_rows = {
+            row["sale_key"]: row
+            for row in _management_commission_sales()[0]
+            if row["sale_key"] in selected_keys
+        }
+        if not valid_rows:
+            flash("没有找到可更新的 Management 佣金。", "error")
+            return redirect(url_for("admin_management_payments", month=month))
+
+        changed_at = now()
+        is_paid = action == "paid"
+        operator = {
+            "user_id": session.get("user_id") or "",
+            "username": session.get("username") or "",
+        }
+        for sale_key, row in valid_rows.items():
+            management_payments.update_one(
+                {"sale_key": sale_key},
+                {
+                    "$set": {
+                        "is_paid": is_paid,
+                        "item_id": row["item_id"],
+                        "sku": row["sku"],
+                        "sold_at": row["sold_at"],
+                        "commission_amount": row["commission"],
+                        "currency": row["currency"],
+                        "paid_at": changed_at if is_paid else None,
+                        "updated_at": changed_at,
+                        "updated_by": operator,
+                    },
+                    "$setOnInsert": {"created_at": changed_at},
+                    "$push": {"history": {
+                        "status": "PAID" if is_paid else "UNPAID",
+                        "at": changed_at,
+                        "by": operator,
+                    }},
+                },
+                upsert=True,
+            )
+        label = "已支付" if is_paid else "未支付"
+        flash(f"已将 {len(valid_rows)} 笔佣金改为{label}。", "ok")
+        return redirect(url_for("admin_management_payments", month=month))
 
     @app.get("/management")
     @require_roles(ROLE_MANAGEMENT)

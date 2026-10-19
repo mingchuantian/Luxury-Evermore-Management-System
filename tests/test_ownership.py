@@ -130,8 +130,26 @@ class FakeInventory:
         return SimpleNamespace(deleted_count=0)
 
 
+class FakePayments(FakeInventory):
+    def update_one(self, query, update, upsert=False):
+        for doc in self.docs:
+            if _matches(doc, query):
+                break
+        else:
+            if not upsert:
+                return SimpleNamespace(modified_count=0)
+            doc = deepcopy(query)
+            doc.update(deepcopy(update.get("$setOnInsert", {})))
+            doc.setdefault("_id", ObjectId())
+            self.docs.append(doc)
+        doc.update(deepcopy(update.get("$set", {})))
+        for key, value in update.get("$push", {}).items():
+            doc.setdefault(key, []).append(deepcopy(value))
+        return SimpleNamespace(modified_count=1)
+
+
 class OwnershipTests(unittest.TestCase):
-    def _make_app(self, items):
+    def _make_app(self, items, payments=None):
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
 
@@ -139,7 +157,21 @@ class OwnershipTests(unittest.TestCase):
         def logout():
             return "logout"
 
-        register_management(app, items)
+        for path, endpoint in (
+            ("/", "index"),
+            ("/items", "list_items"),
+            ("/items/new/buyin", "item_new_buyin_form"),
+            ("/items/new/consignment", "item_new_consignment_form"),
+            ("/analytics", "analytics"),
+            ("/audit", "audit_history"),
+            ("/notes", "notes_list"),
+            ("/users", "users_list"),
+        ):
+            app.add_url_rule(path, endpoint, lambda: "placeholder")
+
+        register_management(
+            app, items, management_payments=payments
+        )
         register_sales(app, items)
         return app
 
@@ -554,6 +586,62 @@ class OwnershipTests(unittest.TestCase):
         self.assertNotIn(b"Sale Price", august_page.data)
         self.assertNotIn(b"Sales:", august_page.data)
         self.assertIn(b"Commission Status", august_page.data)
+
+    def test_admin_can_mark_management_commission_paid_and_unpaid(self):
+        sold_at = datetime(2026, 8, 21, 4, 0, tzinfo=timezone.utc)
+        items = FakeInventory([{
+            "_id": ObjectId(), "sku": "COMMISSION01",
+            "serial_code": "SERIAL-COMMISSION", "name": "Commission Bag",
+            "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+            "sold_record": [{
+                "sold_at": sold_at, "sold_price": 2500,
+                "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
+                "management_commission_amount": 25,
+                "management_commission_currency": "SGD",
+            }],
+        }])
+        payments = FakePayments()
+        app = self._make_app(items, payments)
+
+        with app.test_client() as client:
+            self._login(client, "Admin")
+            page = client.get("/admin/management-payments?month=2026-08")
+            key_match = re.search(
+                rb'name="sale_key" value="([0-9a-f]+)"', page.data
+            )
+            self.assertIsNotNone(key_match)
+            sale_key = key_match.group(1).decode()
+            paid = client.post(
+                "/admin/management-payments/update",
+                data={
+                    "month": "2026-08", "action": "paid",
+                    "sale_key": sale_key,
+                },
+            )
+            paid_page = client.get(
+                "/admin/management-payments?month=2026-08"
+            )
+            unpaid = client.post(
+                "/admin/management-payments/update",
+                data={
+                    "month": "2026-08", "action": "unpaid",
+                    "sale_key": sale_key,
+                },
+            )
+            unpaid_page = client.get(
+                "/admin/management-payments?month=2026-08"
+            )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"COMMISSION01", page.data)
+        self.assertIn(b"25.00 SGD", page.data)
+        self.assertEqual(paid.status_code, 302)
+        self.assertTrue(payments.docs[0]["history"])
+        self.assertIn(b">Paid</b>", paid_page.data)
+        self.assertEqual(unpaid.status_code, 302)
+        self.assertFalse(payments.docs[0]["is_paid"])
+        self.assertEqual(len(payments.docs[0]["history"]), 2)
+        self.assertIn(b">Unpaid</b>", unpaid_page.data)
 
     def test_management_can_regenerate_receipts_for_visible_sold_items(self):
         sold_at = datetime(2026, 8, 21, tzinfo=timezone.utc)

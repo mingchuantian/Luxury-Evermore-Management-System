@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Management付款</h2>
+
+<form method="get" action="{{ url_for('admin_management_payments') }}" style="margin-bottom:14px;">
+  <label for="payment-month">月份</label>
+  <select id="payment-month" name="month" onchange="this.form.submit()">
+    {% for month in payment_months %}
+      <option value="{{ month }}" {% if month == payment_month %}selected{% endif %}>{{ month }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit">查看</button></noscript>
+</form>
+
+<p>
+  <b>{{ payment_month }}</b> · 共 {{ payment_rows|length }} 笔佣金 · 未支付：
+  {% if unpaid_totals %}
+    {% for currency, total in unpaid_totals|dictsort %}
+      <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  {% else %}
+    <b>0.00 SGD</b>
+  {% endif %}
+</p>
+
+{% if payment_rows %}
+  <form method="post" action="{{ url_for('admin_management_payments_update') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="month" value="{{ payment_month }}">
+    <p>
+      <button type="button" onclick="document.querySelectorAll('.payment-check').forEach(box => box.checked = box.dataset.paid === '0')">全选 Unpaid</button>
+      <button type="button" onclick="document.querySelectorAll('.payment-check').forEach(box => box.checked = box.dataset.paid === '1')">全选 Paid</button>
+      <button type="button" onclick="document.querySelectorAll('.payment-check').forEach(box => box.checked = false)">取消全选</button>
+      <button type="submit" name="action" value="paid">将所选改为 Paid</button>
+      <button type="submit" name="action" value="unpaid">将所选改回 Unpaid</button>
+    </p>
+    <table>
+      <tr><th>选择</th><th>售出日期</th><th>SKU</th><th>Serial Code</th><th>商品</th><th>佣金</th><th>状态</th></tr>
+      {% for sale in payment_rows %}
+        <tr>
+          <td><input class="payment-check" type="checkbox" name="sale_key" value="{{ sale.sale_key }}" data-paid="{{ '1' if sale.paid else '0' }}"></td>
+          <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
+          <td>{{ sale.sku }}</td>
+          <td>{{ sale.serial_code or "-" }}</td>
+          <td>
+            {% if sale.shopify_title %}
+              {{ sale.shopify_title }}
+              <div class="muted" style="font-size:12px;">{{ sale.name }}</div>
+            {% else %}
+              {{ sale.name }}
+            {% endif %}
+          </td>
+          <td>{{ "%.2f"|format(sale.commission) }} {{ sale.currency }}</td>
+          <td><b>{{ "Paid" if sale.paid else "Unpaid" }}</b></td>
+        </tr>
+      {% endfor %}
+    </table>
+  </form>
+{% else %}
+  <p class="muted">这个月份没有 Management 佣金记录。</p>
+{% endif %}
+{% endblock %}
