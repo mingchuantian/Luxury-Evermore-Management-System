@@ -30,6 +30,7 @@ def register_all(
         app,
         management_items if management_items is not None else items,
         audit_logs=audit_logs,
+        users=users,
     )
     register_dashboard(
         app,

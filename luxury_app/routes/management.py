@@ -13,6 +13,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    session,
     url_for,
 )
 from pymongo import DESCENDING
@@ -45,7 +46,7 @@ def _is_object_id(value):
         return False
 
 
-def register(app, items, audit_logs=None):
+def register(app, items, audit_logs=None, users=None):
     def _dt8_date_str(value):
         if value is None or value == "":
             return ""
@@ -134,66 +135,108 @@ def register(app, items, audit_logs=None):
             return value.timestamp()
         return 0.0
 
+    def _management_identities():
+        user_ids = set()
+        usernames = set()
+        # The active Management account is authoritative even in lightweight
+        # test/dev setups where the users collection is not supplied.
+        if session.get("user_id"):
+            user_ids.add(str(session["user_id"]))
+        if session.get("username"):
+            usernames.add(str(session["username"]))
+        if users is not None:
+            try:
+                for user in users.find({"role": ROLE_MANAGEMENT}):
+                    if user.get("_id") is not None:
+                        user_ids.add(str(user["_id"]))
+                    if user.get("username"):
+                        usernames.add(str(user["username"]))
+            except Exception:
+                app.logger.exception(
+                    "Failed to load Management users for commission history."
+                )
+        return user_ids, usernames
+
+    def _legacy_sale_was_by_management(item, user_ids, usernames):
+        for entry in reversed(item.get("audit") or []):
+            if (
+                entry.get("action") == "Change_status"
+                and entry.get("to") == "SOLD"
+            ):
+                operator = entry.get("by") or {}
+                operator_id = str(operator.get("user_id") or "")
+                operator_name = str(operator.get("username") or "")
+                return (
+                    (operator_id and operator_id in user_ids)
+                    or (operator_name and operator_name in usernames)
+                )
+        # Very old entries may predate usable audit data. Preserve the earlier
+        # compatibility rule only when no SOLD audit can be found at all.
+        return item.get("ownership") == OWNERSHIP_MANAGEMENT
+
     def _management_commission_sales(selected_month):
         """Build a month-filtered ledger from sale records made by Management."""
         rows = []
         available_months = set()
+        management_user_ids, management_usernames = _management_identities()
         for item in items.find({
             "status": "SOLD",
             "ownership": {"$in": list(VISIBLE_OWNERSHIPS)},
         }):
             sale_records = item.get("sold_record") or []
-            for sale in sale_records:
-                sold_at = sale.get("sold_at")
-                if not isinstance(sold_at, datetime):
-                    continue
-                if sold_at.tzinfo is None:
-                    sold_at = sold_at.replace(tzinfo=timezone.utc)
-                sold_at_local = sold_at.astimezone(BUSINESS_TZ)
-                month = sold_at_local.strftime("%Y-%m")
+            if not sale_records:
+                continue
+            sale = sale_records[-1] or {}
+            sold_at = sale.get("sold_at")
+            if not isinstance(sold_at, datetime):
+                continue
+            if sold_at.tzinfo is None:
+                sold_at = sold_at.replace(tzinfo=timezone.utc)
+            sold_at_local = sold_at.astimezone(BUSINESS_TZ)
+            month = sold_at_local.strftime("%Y-%m")
 
-                explicitly_management = (
-                    sale.get("sold_by_role") == ROLE_MANAGEMENT
+            explicitly_management = sale.get("sold_by_role") == ROLE_MANAGEMENT
+            legacy_management_sale = (
+                not sale.get("sold_by_role")
+                and _legacy_sale_was_by_management(
+                    item, management_user_ids, management_usernames
                 )
-                legacy_management_owned = (
-                    not sale.get("sold_by_role")
-                    and item.get("ownership") == OWNERSHIP_MANAGEMENT
-                )
-                if not (explicitly_management or legacy_management_owned):
-                    continue
+            )
+            if not (explicitly_management or legacy_management_sale):
+                continue
 
-                available_months.add(month)
-                if month != selected_month:
-                    continue
-                sold_price = sale.get("sold_price") or 0
-                try:
-                    sold_price = float(sold_price)
-                except (TypeError, ValueError):
-                    sold_price = 0
-                amount = sale.get("management_commission_amount")
-                try:
-                    amount = float(amount)
-                except (TypeError, ValueError):
-                    amount = round(sold_price * 0.01, 2)
-                currency = (
-                    sale.get("management_commission_currency")
-                    or sale.get("sold_currency")
-                    or item.get("listing_currency")
-                    or "SGD"
-                ).strip().upper()
-                rows.append({
-                    "sku": item.get("sku") or "",
-                    "serial_code": item.get("serial_code") or "",
-                    "name": item.get("name") or "",
-                    "sold_at": sold_at_local,
-                    "sold_price": sold_price,
-                    "currency": currency,
-                    "commission": amount,
-                    "paid": bool(
-                        sale.get("management_commission_paid")
-                        or sale.get("management_commission_paid_at")
-                    ),
-                })
+            available_months.add(month)
+            if month != selected_month:
+                continue
+            sold_price = sale.get("sold_price") or 0
+            try:
+                sold_price = float(sold_price)
+            except (TypeError, ValueError):
+                sold_price = 0
+            amount = sale.get("management_commission_amount")
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                amount = round(sold_price * 0.01, 2)
+            currency = (
+                sale.get("management_commission_currency")
+                or sale.get("sold_currency")
+                or item.get("listing_currency")
+                or "SGD"
+            ).strip().upper()
+            rows.append({
+                "sku": item.get("sku") or "",
+                "serial_code": item.get("serial_code") or "",
+                "name": item.get("name") or "",
+                "sold_at": sold_at_local,
+                "sold_price": sold_price,
+                "currency": currency,
+                "commission": amount,
+                "paid": bool(
+                    sale.get("management_commission_paid")
+                    or sale.get("management_commission_paid_at")
+                ),
+            })
         rows.sort(key=lambda row: row["sold_at"], reverse=True)
         return rows, available_months
 

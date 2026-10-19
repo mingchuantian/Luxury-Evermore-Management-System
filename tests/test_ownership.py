@@ -487,6 +487,29 @@ class OwnershipTests(unittest.TestCase):
                 }],
             },
             {
+                "_id": ObjectId(), "sku": "LEGACY-ADMIN-MANAGER-SALE",
+                "serial_code": "SERIAL-C", "name": "Legacy Admin Bag",
+                "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": august - timedelta(days=1), "sold_price": 700,
+                    "sold_currency": "SGD",
+                }, {
+                    "sold_at": august, "sold_price": 1500,
+                    "sold_currency": "SGD",
+                }],
+                "audit": [{
+                    "at": august - timedelta(days=1),
+                    "action": "Change_status", "from": "ON_SHELF",
+                    "to": "SOLD",
+                    "by": {"user_id": "old-admin", "username": "admin"},
+                }, {
+                    "at": august,
+                    "action": "Change_status", "from": "ON_SHELF",
+                    "to": "SOLD",
+                    "by": {"user_id": "manager-id", "username": "employee"},
+                }],
+            },
+            {
                 "_id": ObjectId(), "sku": "JULY-SALE", "name": "July Bag",
                 "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
                 "sold_record": [{
@@ -513,10 +536,11 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(august_page.status_code, 200)
         self.assertIn(b"ADMIN-MANAGED-SALE", august_page.data)
         self.assertIn(b"LEGACY-MANAGEMENT-SALE", august_page.data)
+        self.assertIn(b"LEGACY-ADMIN-MANAGER-SALE", august_page.data)
         self.assertNotIn(b"JULY-SALE", august_page.data)
         self.assertNotIn(b"ADMIN-OWN-SALE", august_page.data)
-        self.assertIn(b"Sales: <b>3500.00 SGD</b>", august_page.data)
-        self.assertIn(b"<b>35.00 SGD</b>", august_page.data)
+        self.assertIn(b"Sales: <b>5000.00 SGD</b>", august_page.data)
+        self.assertIn(b"<b>50.00 SGD</b>", august_page.data)
         self.assertIn(b"SERIAL-A", august_page.data)
 
     def test_management_can_regenerate_receipts_for_visible_sold_items(self):
