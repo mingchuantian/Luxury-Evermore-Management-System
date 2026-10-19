@@ -23,9 +23,6 @@
 
 <p>
   <b>{{ commission_month }}</b> · {{ commission_sales|length }} item(s) sold
-  {% for currency, total in commission_sales_totals|dictsort %}
-    · Sales: <b>{{ "%.2f"|format(total) }} {{ currency }}</b>
-  {% endfor %}
 </p>
 <p>
   Unpaid commission (1%):
@@ -40,14 +37,20 @@
 
 {% if commission_sales %}
   <table>
-    <tr><th>Sold Date</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Sale Price</th><th>Commission (1%)</th><th>Status</th></tr>
+    <tr><th>Sold Date</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Commission (1%)</th><th>Commission Status</th></tr>
     {% for sale in commission_sales %}
       <tr>
         <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
         <td>{{ sale.sku }}</td>
         <td>{{ sale.serial_code or "-" }}</td>
-        <td>{{ sale.name }}</td>
-        <td>{{ "%.2f"|format(sale.sold_price) }} {{ sale.currency }}</td>
+        <td>
+          {% if sale.shopify_title %}
+            {{ sale.shopify_title }}
+            <div class="muted" style="font-size:12px;">{{ sale.name }}</div>
+          {% else %}
+            {{ sale.name }}
+          {% endif %}
+        </td>
         <td>{{ "%.2f"|format(sale.commission) }} {{ sale.currency }}</td>
         <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
       </tr>

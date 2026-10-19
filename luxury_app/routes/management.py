@@ -228,6 +228,10 @@ def register(app, items, audit_logs=None, users=None):
                 "sku": item.get("sku") or "",
                 "serial_code": item.get("serial_code") or "",
                 "name": item.get("name") or "",
+                "shopify_title": (
+                    ((item.get("shopify_details") or {}).get("title") or "")
+                    if item.get("shopify_sku_exist") is True else ""
+                ),
                 "sold_at": sold_at_local,
                 "sold_price": sold_price,
                 "currency": currency,
@@ -269,12 +273,8 @@ def register(app, items, audit_logs=None, users=None):
         available_months.add(current_month)
         available_months.add(commission_month)
         commission_totals = {}
-        sales_totals = {}
         for row in commission_sales:
             currency = row["currency"]
-            sales_totals[currency] = (
-                sales_totals.get(currency, 0) + row["sold_price"]
-            )
             if not row["paid"]:
                 commission_totals[currency] = (
                     commission_totals.get(currency, 0) + row["commission"]
@@ -289,7 +289,6 @@ def register(app, items, audit_logs=None, users=None):
             commission_months=sorted(available_months, reverse=True),
             commission_sales=commission_sales,
             commission_totals=commission_totals,
-            commission_sales_totals=sales_totals,
         )
 
     @app.get("/management/items")

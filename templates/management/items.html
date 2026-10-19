@@ -65,7 +65,14 @@
         </td>
         <td class="muted">{{ item.sku }}</td>
         <td class="muted">{{ item.serial_code or "-" }}</td>
-        <td><a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
+        <td>
+          {% if item.shopify_sku_exist and item.shopify_details and item.shopify_details.title %}
+            <a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.shopify_details.title }}</a>
+            <div class="muted" style="font-size:12px;">{{ item.name }}</div>
+          {% else %}
+            <a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.name }}</a>
+          {% endif %}
+        </td>
         <td class="muted">{{ item.brand }}</td>
         <td class="muted">{{ item.source_type or "" }}</td>
         <td class="muted">{{ item.seller_name or "" }}</td>
@@ -102,7 +109,14 @@
         </td>
         <td class="muted">{{ item.sku }}</td>
         <td class="muted">{{ item.serial_code or "-" }}</td>
-        <td>{{ item.name }}</td>
+        <td>
+          {% if item.shopify_sku_exist and item.shopify_details and item.shopify_details.title %}
+            {{ item.shopify_details.title }}
+            <div class="muted" style="font-size:12px;">{{ item.name }}</div>
+          {% else %}
+            {{ item.name }}
+          {% endif %}
+        </td>
         <td class="muted">{{ item.brand }}</td>
         <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
         <td>

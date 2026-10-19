@@ -339,8 +339,10 @@ class OwnershipTests(unittest.TestCase):
                 "created_at": created_at,
                 "purchase_at": created_at,
                 "shopify_details": {
-                    "featured_image": "https://cdn.shopify.com/management.jpg"
+                    "featured_image": "https://cdn.shopify.com/management.jpg",
+                    "title": "Shopify Management Bag",
                 },
+                "shopify_sku_exist": True,
                 "audit": [],
             },
             {
@@ -355,8 +357,10 @@ class OwnershipTests(unittest.TestCase):
                 "seller_name": "ADMIN-PRIVATE-SELLER",
                 "cost": 987654321,
                 "shopify_details": {
-                    "featured_image": "https://cdn.shopify.com/admin.jpg"
+                    "featured_image": "https://cdn.shopify.com/admin.jpg",
+                    "title": "Shopify Admin Bag",
                 },
+                "shopify_sku_exist": True,
                 "audit": [],
             },
             {
@@ -389,6 +393,8 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn(b"ADMIN01", item_list.data)
         self.assertIn(b"https://cdn.shopify.com/management.jpg", item_list.data)
         self.assertIn(b"https://cdn.shopify.com/admin.jpg", item_list.data)
+        self.assertIn(b"Shopify Management Bag", item_list.data)
+        self.assertIn(b"Shopify Admin Bag", item_list.data)
         self.assertNotIn(b"HIDDEN1", item_list.data)
         self.assertNotIn(b"ADMIN-PRIVATE-SELLER", item_list.data)
         self.assertNotIn(b"987654321", item_list.data)
@@ -469,6 +475,8 @@ class OwnershipTests(unittest.TestCase):
                 "_id": ObjectId(), "sku": "ADMIN-MANAGED-SALE",
                 "serial_code": "SERIAL-A", "name": "Admin Bag",
                 "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "shopify_sku_exist": True,
+                "shopify_details": {"title": "Shopify Commission Bag"},
                 "sold_record": [{
                     "sold_at": august, "sold_price": 2500,
                     "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
@@ -539,9 +547,13 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn(b"LEGACY-ADMIN-MANAGER-SALE", august_page.data)
         self.assertNotIn(b"JULY-SALE", august_page.data)
         self.assertNotIn(b"ADMIN-OWN-SALE", august_page.data)
-        self.assertIn(b"Sales: <b>5000.00 SGD</b>", august_page.data)
         self.assertIn(b"<b>50.00 SGD</b>", august_page.data)
         self.assertIn(b"SERIAL-A", august_page.data)
+        self.assertIn(b"Shopify Commission Bag", august_page.data)
+        self.assertIn(b"Admin Bag", august_page.data)
+        self.assertNotIn(b"Sale Price", august_page.data)
+        self.assertNotIn(b"Sales:", august_page.data)
+        self.assertIn(b"Commission Status", august_page.data)
 
     def test_management_can_regenerate_receipts_for_visible_sold_items(self):
         sold_at = datetime(2026, 8, 21, tzinfo=timezone.utc)
