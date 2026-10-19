@@ -31,7 +31,7 @@ from ..constants import (
     OWNERSHIP_MANAGEMENT,
 )
 from ..item_creation import create_item_from_form
-from ..utils import money_int
+from ..utils import BUSINESS_TZ, money_int
 
 
 VISIBLE_OWNERSHIPS = (OWNERSHIP_ADMIN, OWNERSHIP_MANAGEMENT)
@@ -134,6 +134,69 @@ def register(app, items, audit_logs=None):
             return value.timestamp()
         return 0.0
 
+    def _management_commission_sales(selected_month):
+        """Build a month-filtered ledger from sale records made by Management."""
+        rows = []
+        available_months = set()
+        for item in items.find({
+            "status": "SOLD",
+            "ownership": {"$in": list(VISIBLE_OWNERSHIPS)},
+        }):
+            sale_records = item.get("sold_record") or []
+            for sale in sale_records:
+                sold_at = sale.get("sold_at")
+                if not isinstance(sold_at, datetime):
+                    continue
+                if sold_at.tzinfo is None:
+                    sold_at = sold_at.replace(tzinfo=timezone.utc)
+                sold_at_local = sold_at.astimezone(BUSINESS_TZ)
+                month = sold_at_local.strftime("%Y-%m")
+
+                explicitly_management = (
+                    sale.get("sold_by_role") == ROLE_MANAGEMENT
+                )
+                legacy_management_owned = (
+                    not sale.get("sold_by_role")
+                    and item.get("ownership") == OWNERSHIP_MANAGEMENT
+                )
+                if not (explicitly_management or legacy_management_owned):
+                    continue
+
+                available_months.add(month)
+                if month != selected_month:
+                    continue
+                sold_price = sale.get("sold_price") or 0
+                try:
+                    sold_price = float(sold_price)
+                except (TypeError, ValueError):
+                    sold_price = 0
+                amount = sale.get("management_commission_amount")
+                try:
+                    amount = float(amount)
+                except (TypeError, ValueError):
+                    amount = round(sold_price * 0.01, 2)
+                currency = (
+                    sale.get("management_commission_currency")
+                    or sale.get("sold_currency")
+                    or item.get("listing_currency")
+                    or "SGD"
+                ).strip().upper()
+                rows.append({
+                    "sku": item.get("sku") or "",
+                    "serial_code": item.get("serial_code") or "",
+                    "name": item.get("name") or "",
+                    "sold_at": sold_at_local,
+                    "sold_price": sold_price,
+                    "currency": currency,
+                    "commission": amount,
+                    "paid": bool(
+                        sale.get("management_commission_paid")
+                        or sale.get("management_commission_paid_at")
+                    ),
+                })
+        rows.sort(key=lambda row: row["sold_at"], reverse=True)
+        return rows, available_months
+
     @app.get("/management")
     @require_roles(ROLE_MANAGEMENT)
     def management_index():
@@ -152,12 +215,38 @@ def register(app, items, audit_logs=None):
         })
         sold = management_sold + len(recent_admin_sold)
         total = received + on_shelf + sold
+
+        current_month = now().astimezone(BUSINESS_TZ).strftime("%Y-%m")
+        commission_month = (request.args.get("commission_month") or "").strip()
+        if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", commission_month):
+            commission_month = current_month
+        commission_sales, available_months = _management_commission_sales(
+            commission_month
+        )
+        available_months.add(current_month)
+        available_months.add(commission_month)
+        commission_totals = {}
+        sales_totals = {}
+        for row in commission_sales:
+            currency = row["currency"]
+            sales_totals[currency] = (
+                sales_totals.get(currency, 0) + row["sold_price"]
+            )
+            if not row["paid"]:
+                commission_totals[currency] = (
+                    commission_totals.get(currency, 0) + row["commission"]
+                )
         return render_template(
             "management/index.html",
             total=total,
             received=received,
             on_shelf=on_shelf,
             sold=sold,
+            commission_month=commission_month,
+            commission_months=sorted(available_months, reverse=True),
+            commission_sales=commission_sales,
+            commission_totals=commission_totals,
+            commission_sales_totals=sales_totals,
         )
 
     @app.get("/management/items")
@@ -202,12 +291,12 @@ def register(app, items, audit_logs=None):
                 {"sku": {"$regex": q_esc, "$options": "i"}},
                 {"name": {"$regex": q_esc, "$options": "i"}},
                 {"brand": {"$regex": q_esc, "$options": "i"}},
+                {"serial_code": {"$regex": q_esc, "$options": "i"}},
             ]
             admin_conditions.append({"$or": public_search})
             management_branch["$or"] = public_search + [
                 {"note": {"$regex": q_esc, "$options": "i"}},
                 {"tracking_number": {"$regex": q_esc, "$options": "i"}},
-                {"serial_code": {"$regex": q_esc, "$options": "i"}},
             ]
 
         total = items.count_documents(filt)

@@ -48,7 +48,7 @@
 </div>
 
 {% macro table_header() %}
-  <tr><th>Date</th><th class="col-img">Image</th><th>SKU</th><th>Name</th><th>Brand</th><th>Type</th><th>Seller</th><th>Note</th><th>Cost</th><th>Price</th><th>Status</th><th>Action</th></tr>
+  <tr><th>Date</th><th class="col-img">Image</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Brand</th><th>Type</th><th>Seller</th><th>Note</th><th>Cost</th><th>Price</th><th>Status</th><th>Action</th></tr>
 {% endmacro %}
 
 <h3>Management Items</h3>
@@ -64,6 +64,7 @@
           {% endif %}
         </td>
         <td class="muted">{{ item.sku }}</td>
+        <td class="muted">{{ item.serial_code or "-" }}</td>
         <td><a href="{{ url_for('management_item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
         <td class="muted">{{ item.brand }}</td>
         <td class="muted">{{ item.source_type or "" }}</td>
@@ -100,6 +101,7 @@
           {% endif %}
         </td>
         <td class="muted">{{ item.sku }}</td>
+        <td class="muted">{{ item.serial_code or "-" }}</td>
         <td>{{ item.name }}</td>
         <td class="muted">{{ item.brand }}</td>
         <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>

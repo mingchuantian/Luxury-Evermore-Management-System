@@ -7,4 +7,53 @@
   <li>On shelf: <b>{{ on_shelf }}</b></li>
   <li>Sold: <b>{{ sold }}</b></li>
 </ul>
+
+<hr>
+
+<h3>Sales Commission</h3>
+<form method="get" action="{{ url_for('management_index') }}" style="margin-bottom:14px;">
+  <label for="commission-month">Month</label>
+  <select id="commission-month" name="commission_month" onchange="this.form.submit()">
+    {% for month in commission_months %}
+      <option value="{{ month }}" {% if month == commission_month %}selected{% endif %}>{{ month }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit">View</button></noscript>
+</form>
+
+<p>
+  <b>{{ commission_month }}</b> · {{ commission_sales|length }} item(s) sold
+  {% for currency, total in commission_sales_totals|dictsort %}
+    · Sales: <b>{{ "%.2f"|format(total) }} {{ currency }}</b>
+  {% endfor %}
+</p>
+<p>
+  Unpaid commission (1%):
+  {% if commission_totals %}
+    {% for currency, total in commission_totals|dictsort %}
+      <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  {% else %}
+    <b>0.00 SGD</b>
+  {% endif %}
+</p>
+
+{% if commission_sales %}
+  <table>
+    <tr><th>Sold Date</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Sale Price</th><th>Commission (1%)</th><th>Status</th></tr>
+    {% for sale in commission_sales %}
+      <tr>
+        <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
+        <td>{{ sale.sku }}</td>
+        <td>{{ sale.serial_code or "-" }}</td>
+        <td>{{ sale.name }}</td>
+        <td>{{ "%.2f"|format(sale.sold_price) }} {{ sale.currency }}</td>
+        <td>{{ "%.2f"|format(sale.commission) }} {{ sale.currency }}</td>
+        <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p class="muted">No Management sales in this month.</p>
+{% endif %}
 {% endblock %}

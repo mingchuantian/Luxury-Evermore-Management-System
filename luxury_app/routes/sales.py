@@ -2,7 +2,7 @@ from datetime import timedelta, timezone
 import re
 
 from bson import ObjectId
-from flask import flash, redirect, render_template, request, send_file, url_for
+from flask import flash, redirect, render_template, request, send_file, session, url_for
 from pymongo import DESCENDING
 
 from models import now
@@ -188,7 +188,19 @@ def _process_sale(
         "payment_method": payment_method,
         "receipt_no": receipt_number,
         "package_inclusion": package_inclusion,
+        "sold_by_role": session.get("role") or "",
+        "sold_by_user_id": session.get("user_id") or "",
+        "sold_by_username": session.get("username") or "",
     }
+    if session.get("role") == ROLE_MANAGEMENT:
+        # Freeze the salesperson and agreed rate on the sale itself so future
+        # ownership or commission-policy changes cannot rewrite history.
+        record.update({
+            "management_commission_rate": 0.01,
+            "management_commission_amount": round(sold_price * 0.01, 2),
+            "management_commission_currency": sold_currency,
+            "management_commission_paid": False,
+        })
     if action == "receipt":
         return _send_receipt(item, record, receipt_number, sku)
 

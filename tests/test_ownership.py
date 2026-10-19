@@ -332,6 +332,7 @@ class OwnershipTests(unittest.TestCase):
             {
                 "_id": management_id,
                 "sku": "MGMT001",
+                "serial_code": "MGMT-SERIAL-001",
                 "name": "Management Bag",
                 "ownership": OWNERSHIP_MANAGEMENT,
                 "status": "RECEIVED",
@@ -345,6 +346,7 @@ class OwnershipTests(unittest.TestCase):
             {
                 "_id": admin_id,
                 "sku": "ADMIN01",
+                "serial_code": "ADMIN-SERIAL-001",
                 "name": "Admin Bag",
                 "ownership": OWNERSHIP_ADMIN,
                 "status": "RECEIVED",
@@ -375,6 +377,7 @@ class OwnershipTests(unittest.TestCase):
             dashboard = client.get("/management")
             item_list = client.get("/management/items")
             public_search = client.get("/management/items?q=ADMIN01")
+            serial_search = client.get("/management/items?q=ADMIN-SERIAL-001")
             private_search = client.get("/management/items?q=ADMIN-PRIVATE-SELLER")
             denied_detail = client.get(f"/management/items/{admin_id}")
             legacy_path = client.get("/outsider/items")
@@ -392,6 +395,10 @@ class OwnershipTests(unittest.TestCase):
         self.assertNotIn(b"/management/items/ADMIN01", item_list.data)
         self.assertIn(f"/management/sales/new/{admin_id}".encode(), item_list.data)
         self.assertIn(b"ADMIN01", public_search.data)
+        self.assertIn(b"Serial Code", item_list.data)
+        self.assertIn(b"MGMT-SERIAL-001", item_list.data)
+        self.assertIn(b"ADMIN-SERIAL-001", item_list.data)
+        self.assertIn(b"ADMIN01", serial_search.data)
         self.assertNotIn(b"ADMIN01", private_search.data)
         self.assertEqual(denied_detail.status_code, 404)
         self.assertEqual(legacy_path.status_code, 404)
@@ -447,6 +454,70 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(sale_result.headers["Location"].endswith("/management/items"))
         self.assertEqual(items.docs[0]["status"], "SOLD")
         self.assertEqual(len(items.docs[0]["sold_record"]), 1)
+        sale = items.docs[0]["sold_record"][0]
+        self.assertEqual(sale["sold_by_role"], ROLE_MANAGEMENT)
+        self.assertEqual(sale["sold_by_username"], "employee")
+        self.assertEqual(sale["management_commission_rate"], 0.01)
+        self.assertEqual(sale["management_commission_amount"], 12.0)
+        self.assertFalse(sale["management_commission_paid"])
+
+    def test_management_dashboard_groups_monthly_commission_sales(self):
+        august = datetime(2026, 8, 21, 4, 0, tzinfo=timezone.utc)
+        july = datetime(2026, 7, 2, 4, 0, tzinfo=timezone.utc)
+        items = FakeInventory([
+            {
+                "_id": ObjectId(), "sku": "ADMIN-MANAGED-SALE",
+                "serial_code": "SERIAL-A", "name": "Admin Bag",
+                "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": august, "sold_price": 2500,
+                    "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
+                    "management_commission_amount": 25,
+                    "management_commission_currency": "SGD",
+                    "management_commission_paid": False,
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "LEGACY-MANAGEMENT-SALE",
+                "serial_code": "SERIAL-B", "name": "Legacy Bag",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": august, "sold_price": 1000,
+                    "sold_currency": "SGD",
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "JULY-SALE", "name": "July Bag",
+                "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": july, "sold_price": 800,
+                    "sold_currency": "SGD",
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "ADMIN-OWN-SALE",
+                "name": "Admin Own Sale", "ownership": OWNERSHIP_ADMIN,
+                "status": "SOLD", "sold_record": [{
+                    "sold_at": august, "sold_price": 9000,
+                    "sold_currency": "SGD", "sold_by_role": "Admin",
+                }],
+            },
+        ])
+        app = self._make_app(items)
+        with app.test_client() as client:
+            self._login(client, ROLE_MANAGEMENT)
+            august_page = client.get(
+                "/management?commission_month=2026-08"
+            )
+
+        self.assertEqual(august_page.status_code, 200)
+        self.assertIn(b"ADMIN-MANAGED-SALE", august_page.data)
+        self.assertIn(b"LEGACY-MANAGEMENT-SALE", august_page.data)
+        self.assertNotIn(b"JULY-SALE", august_page.data)
+        self.assertNotIn(b"ADMIN-OWN-SALE", august_page.data)
+        self.assertIn(b"Sales: <b>3500.00 SGD</b>", august_page.data)
+        self.assertIn(b"<b>35.00 SGD</b>", august_page.data)
+        self.assertIn(b"SERIAL-A", august_page.data)
 
     def test_management_can_regenerate_receipts_for_visible_sold_items(self):
         sold_at = datetime(2026, 8, 21, tzinfo=timezone.utc)
