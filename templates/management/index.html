@@ -1,5 +1,21 @@
 {% extends "layout.html" %}
 {% block content %}
+{% macro display_name(sale) %}
+  {% if sale.shopify_title %}
+    {{ sale.shopify_title }}
+    <div class="muted" style="font-size:12px;">{{ sale.name }}</div>
+  {% else %}
+    {{ sale.name }}
+  {% endif %}
+{% endmacro %}
+<style>
+  .agreement-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; align-items:start; }
+  .agreement-column { border:1px solid #ddd; border-radius:6px; padding:12px; min-width:0; background:#fff; }
+  .agreement-column h3 { margin-top:0; }
+  .agreement-formula { min-height:42px; }
+  .agreement-column table { font-size:13px; }
+  @media (max-width: 900px) { .agreement-grid { grid-template-columns:1fr; } .agreement-formula { min-height:0; } }
+</style>
 <h2>Dashboard</h2>
 <ul>
   <li>Total items: <b>{{ total }}</b></li>
@@ -10,7 +26,7 @@
 
 <hr>
 
-<h3>Sales Commission</h3>
+<h3>Monthly Commission &amp; Fees</h3>
 <form method="get" action="{{ url_for('management_index') }}" style="margin-bottom:14px;">
   <label for="commission-month">Month</label>
   <select id="commission-month" name="commission_month" onchange="this.form.submit()">
@@ -21,42 +37,82 @@
   <noscript><button type="submit">View</button></noscript>
 </form>
 
-<p>
-  <b>{{ commission_month }}</b> · {{ commission_sales|length }} item(s) sold
-</p>
-<p>
-  Unpaid commission (1%):
-  {% if commission_totals %}
-    {% for currency, total in commission_totals|dictsort %}
-      <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
-    {% endfor %}
-  {% else %}
-    <b>0.00 SGD</b>
-  {% endif %}
-</p>
+<p><b>{{ commission_month }}</b></p>
 
-{% if commission_sales %}
-  <table>
-    <tr><th>Sold Date</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Commission (1%)</th><th>Commission Status</th></tr>
-    {% for sale in commission_sales %}
-      <tr>
-        <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
-        <td>{{ sale.sku }}</td>
-        <td>{{ sale.serial_code or "-" }}</td>
-        <td>
-          {% if sale.shopify_title %}
-            {{ sale.shopify_title }}
-            <div class="muted" style="font-size:12px;">{{ sale.name }}</div>
-          {% else %}
-            {{ sale.name }}
-          {% endif %}
-        </td>
-        <td>{{ "%.2f"|format(sale.commission) }} {{ sale.currency }}</td>
-        <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
-      </tr>
-    {% endfor %}
-  </table>
-{% else %}
-  <p class="muted">No Management sales in this month.</p>
-{% endif %}
+<div class="agreement-grid">
+  <section class="agreement-column">
+    <h3>Sales Commission</h3>
+    <p class="muted agreement-formula">For every item sold by Management: Sold Price × 1%.</p>
+    <p>Unpaid:
+      {% for currency, total in commission_totals|dictsort %}
+        <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+    {% if commission_sales %}
+      <table>
+        <tr><th>Date</th><th>SKU / Item</th><th>Commission</th><th>Commission Status</th></tr>
+        {% for sale in commission_sales %}
+          <tr>
+            <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
+            <td><b>{{ sale.sku }}</b><br><span class="muted">{{ sale.serial_code or "-" }}</span><br>{{ display_name(sale) }}</td>
+            <td>{{ "%.2f"|format(sale.commission) }} {{ sale.currency }}</td>
+            <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  </section>
+
+  <section class="agreement-column">
+    <h3>Consignment Commission</h3>
+    <p class="muted agreement-formula">For consignment items added and sold by Management: (Sold Price − Cost) × 20%.</p>
+    <p>Unpaid:
+      {% for currency, total in consignment_totals|dictsort %}
+        <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+    {% if consignment_sales %}
+      <table>
+        <tr><th>Date</th><th>SKU / Item</th><th>Commission</th><th>Commission Status</th></tr>
+        {% for sale in consignment_sales %}
+          <tr>
+            <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
+            <td><b>{{ sale.sku }}</b><br><span class="muted">{{ sale.serial_code or "-" }}</span><br>{{ display_name(sale) }}</td>
+            <td>
+              {% if sale.calculation_available %}
+                {{ "%.2f"|format(sale.consignment_commission) }} {{ sale.currency }}
+              {% else %}
+                <span class="muted">Currency mismatch</span>
+              {% endif %}
+            </td>
+            <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  </section>
+
+  <section class="agreement-column">
+    <h3>Buy-in Platform Fee</h3>
+    <p class="muted agreement-formula">For Buy-in items added by Management: Sold Price × 8%.</p>
+    <p>Unpaid:
+      {% for currency, total in platform_fee_totals|dictsort %}
+        <b>{{ "%.2f"|format(total) }} {{ currency }}</b>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+    {% if platform_fee_sales %}
+      <table>
+        <tr><th>Date</th><th>SKU / Item</th><th>Platform Fee</th><th>Payment Status</th></tr>
+        {% for sale in platform_fee_sales %}
+          <tr>
+            <td>{{ sale.sold_at.strftime("%Y-%m-%d") }}</td>
+            <td><b>{{ sale.sku }}</b><br><span class="muted">{{ sale.serial_code or "-" }}</span><br>{{ display_name(sale) }}</td>
+            <td>{{ "%.2f"|format(sale.platform_fee) }} {{ sale.currency }}</td>
+            <td>{{ "Paid" if sale.paid else "Unpaid" }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  </section>
+</div>
 {% endblock %}

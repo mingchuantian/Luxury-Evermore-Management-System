@@ -190,6 +190,36 @@ def register(
         ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    def _apply_payment_states(rows):
+        if management_payments is None or not rows:
+            return rows
+        keys = [row["payment_key"] for row in rows]
+        try:
+            payment_map = {
+                payment.get("sale_key"): bool(payment.get("is_paid"))
+                for payment in management_payments.find({
+                    "sale_key": {"$in": keys}
+                })
+            }
+        except Exception:
+            app.logger.exception(
+                "Failed to load Management commission payment states."
+            )
+            payment_map = {}
+        for row in rows:
+            if row["payment_key"] in payment_map:
+                row["paid"] = payment_map[row["payment_key"]]
+        return rows
+
+    def _unpaid_totals(rows, amount_field):
+        totals = {}
+        for row in rows:
+            if not row["paid"] and row.get(amount_field) is not None:
+                totals[row["currency"]] = (
+                    totals.get(row["currency"], 0) + row[amount_field]
+                )
+        return totals
+
     def _management_commission_sales(selected_month=None):
         """Build a month-filtered ledger from sale records made by Management."""
         rows = []
@@ -240,9 +270,18 @@ def register(
                 or item.get("listing_currency")
                 or "SGD"
             ).strip().upper()
+            try:
+                cost = float(item.get("cost") or 0)
+            except (TypeError, ValueError):
+                cost = 0
+            sale_key = _commission_sale_key(item, sale, sold_at)
             rows.append({
                 "item_id": item.get("_id"),
-                "sale_key": _commission_sale_key(item, sale, sold_at),
+                "sale_key": sale_key,
+                "payment_key": sale_key,
+                "payment_type": "sales_commission",
+                "ownership": item.get("ownership") or "",
+                "source_type": item.get("source_type") or "",
                 "sku": item.get("sku") or "",
                 "serial_code": item.get("serial_code") or "",
                 "name": item.get("name") or "",
@@ -253,30 +292,96 @@ def register(
                 "sold_at": sold_at_local,
                 "sold_price": sold_price,
                 "currency": currency,
+                "cost": cost,
+                "cost_currency": (
+                    item.get("cost_currency")
+                    or item.get("currency")
+                    or currency
+                ).strip().upper(),
                 "commission": amount,
                 "paid": bool(
                     sale.get("management_commission_paid")
                     or sale.get("management_commission_paid_at")
                 ),
             })
+        _apply_payment_states(rows)
+        rows.sort(key=lambda row: row["sold_at"], reverse=True)
+        return rows, available_months
 
-        if management_payments is not None and rows:
-            keys = [row["sale_key"] for row in rows]
+    def _management_consignment_commissions(commission_sales):
+        rows = []
+        for source_row in commission_sales:
+            if not (
+                source_row["ownership"] == OWNERSHIP_MANAGEMENT
+                and source_row["source_type"] == "CONSIGNMENT"
+            ):
+                continue
+            row = dict(source_row)
+            row["payment_key"] = row["sale_key"] + ":consignment"
+            row["payment_type"] = "consignment_commission"
+            row["calculation_available"] = (
+                row["cost_currency"] == row["currency"]
+            )
+            row["consignment_commission"] = (
+                round((row["sold_price"] - row["cost"]) * 0.20, 2)
+                if row["calculation_available"] else None
+            )
+            row["paid"] = False
+            rows.append(row)
+        return _apply_payment_states(rows)
+
+    def _management_buyin_platform_fees(selected_month=None):
+        """Calculate 8% fees for Management-owned buy-ins without writes."""
+        rows = []
+        available_months = set()
+        for item in items.find({
+            "status": "SOLD",
+            "ownership": OWNERSHIP_MANAGEMENT,
+            "source_type": "BUY_IN",
+        }):
+            sale_records = item.get("sold_record") or []
+            if not sale_records:
+                continue
+            sale = sale_records[-1] or {}
+            sold_at = sale.get("sold_at")
+            if not isinstance(sold_at, datetime):
+                continue
+            if sold_at.tzinfo is None:
+                sold_at = sold_at.replace(tzinfo=timezone.utc)
+            sold_at_local = sold_at.astimezone(BUSINESS_TZ)
+            month = sold_at_local.strftime("%Y-%m")
+            available_months.add(month)
+            if selected_month and month != selected_month:
+                continue
             try:
-                payment_map = {
-                    payment.get("sale_key"): bool(payment.get("is_paid"))
-                    for payment in management_payments.find({
-                        "sale_key": {"$in": keys}
-                    })
-                }
-            except Exception:
-                app.logger.exception(
-                    "Failed to load Management commission payment states."
-                )
-                payment_map = {}
-            for row in rows:
-                if row["sale_key"] in payment_map:
-                    row["paid"] = payment_map[row["sale_key"]]
+                sold_price = float(sale.get("sold_price") or 0)
+            except (TypeError, ValueError):
+                sold_price = 0
+            currency = (
+                sale.get("sold_currency")
+                or item.get("listing_currency")
+                or item.get("cost_currency")
+                or "SGD"
+            ).strip().upper()
+            sale_key = _commission_sale_key(item, sale, sold_at)
+            rows.append({
+                "item_id": item.get("_id"),
+                "sale_key": sale_key,
+                "payment_key": sale_key + ":platform_fee",
+                "payment_type": "buyin_platform_fee",
+                "sku": item.get("sku") or "",
+                "serial_code": item.get("serial_code") or "",
+                "name": item.get("name") or "",
+                "shopify_title": (
+                    ((item.get("shopify_details") or {}).get("title") or "")
+                    if item.get("shopify_sku_exist") is True else ""
+                ),
+                "sold_at": sold_at_local,
+                "currency": currency,
+                "platform_fee": round(sold_price * 0.08, 2),
+                "paid": False,
+            })
+        _apply_payment_states(rows)
         rows.sort(key=lambda row: row["sold_at"], reverse=True)
         return rows, available_months
 
@@ -287,23 +392,48 @@ def register(
         selected_month = (request.args.get("month") or "").strip()
         if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", selected_month):
             selected_month = current_month
-        payment_rows, available_months = _management_commission_sales(
+        sales_rows, available_months = _management_commission_sales(
             selected_month
         )
+        consignment_rows = _management_consignment_commissions(sales_rows)
+        platform_rows, platform_months = _management_buyin_platform_fees(
+            selected_month
+        )
+        available_months.update(platform_months)
         available_months.update((current_month, selected_month))
-        unpaid_totals = {}
-        for row in payment_rows:
-            if not row["paid"]:
-                unpaid_totals[row["currency"]] = (
-                    unpaid_totals.get(row["currency"], 0)
-                    + row["commission"]
-                )
         return render_template(
             "admin/management_payments.html",
-            payment_rows=payment_rows,
             payment_month=selected_month,
             payment_months=sorted(available_months, reverse=True),
-            unpaid_totals=unpaid_totals,
+            payment_sections=[
+                {
+                    "title": "Sales Commission",
+                    "formula": "Sold Price × 1%",
+                    "rows": sales_rows,
+                    "amount_field": "commission",
+                    "unpaid_totals": _unpaid_totals(
+                        sales_rows, "commission"
+                    ),
+                },
+                {
+                    "title": "Consignment Commission",
+                    "formula": "(Sold Price − Cost) × 20%",
+                    "rows": consignment_rows,
+                    "amount_field": "consignment_commission",
+                    "unpaid_totals": _unpaid_totals(
+                        consignment_rows, "consignment_commission"
+                    ),
+                },
+                {
+                    "title": "Buy-in Platform Fee",
+                    "formula": "Sold Price × 8%",
+                    "rows": platform_rows,
+                    "amount_field": "platform_fee",
+                    "unpaid_totals": _unpaid_totals(
+                        platform_rows, "platform_fee"
+                    ),
+                },
+            ],
         )
 
     @app.post("/admin/management-payments/update")
@@ -312,7 +442,7 @@ def register(
         if management_payments is None:
             return "Management payment storage is unavailable", 503
         action = (request.form.get("action") or "").strip().lower()
-        selected_keys = set(request.form.getlist("sale_key"))
+        selected_keys = set(request.form.getlist("payment_key"))
         month = (request.form.get("month") or "").strip()
         if action not in {"paid", "unpaid"}:
             return "Invalid payment action", 400
@@ -320,10 +450,16 @@ def register(
             flash("请至少勾选一笔佣金。", "error")
             return redirect(url_for("admin_management_payments", month=month))
 
+        all_sales = _management_commission_sales()[0]
+        all_rows = (
+            all_sales
+            + _management_consignment_commissions(all_sales)
+            + _management_buyin_platform_fees()[0]
+        )
         valid_rows = {
-            row["sale_key"]: row
-            for row in _management_commission_sales()[0]
-            if row["sale_key"] in selected_keys
+            row["payment_key"]: row
+            for row in all_rows
+            if row["payment_key"] in selected_keys
         }
         if not valid_rows:
             flash("没有找到可更新的 Management 佣金。", "error")
@@ -335,16 +471,27 @@ def register(
             "user_id": session.get("user_id") or "",
             "username": session.get("username") or "",
         }
-        for sale_key, row in valid_rows.items():
+        amount_fields = {
+            "sales_commission": "commission",
+            "consignment_commission": "consignment_commission",
+            "buyin_platform_fee": "platform_fee",
+        }
+        changed_count = 0
+        for payment_key, row in valid_rows.items():
+            amount = row.get(amount_fields[row["payment_type"]])
+            if amount is None:
+                continue
             management_payments.update_one(
-                {"sale_key": sale_key},
+                {"sale_key": payment_key},
                 {
                     "$set": {
                         "is_paid": is_paid,
+                        "base_sale_key": row["sale_key"],
+                        "payment_type": row["payment_type"],
                         "item_id": row["item_id"],
                         "sku": row["sku"],
                         "sold_at": row["sold_at"],
-                        "commission_amount": row["commission"],
+                        "commission_amount": amount,
                         "currency": row["currency"],
                         "paid_at": changed_at if is_paid else None,
                         "updated_at": changed_at,
@@ -359,8 +506,9 @@ def register(
                 },
                 upsert=True,
             )
+            changed_count += 1
         label = "已支付" if is_paid else "未支付"
-        flash(f"已将 {len(valid_rows)} 笔佣金改为{label}。", "ok")
+        flash(f"已将 {changed_count} 笔款项改为{label}。", "ok")
         return redirect(url_for("admin_management_payments", month=month))
 
     @app.get("/management")
@@ -389,15 +537,24 @@ def register(
         commission_sales, available_months = _management_commission_sales(
             commission_month
         )
+        consignment_sales = _management_consignment_commissions(
+            commission_sales
+        )
+        platform_fee_sales, platform_fee_months = (
+            _management_buyin_platform_fees(commission_month)
+        )
+        available_months.update(platform_fee_months)
         available_months.add(current_month)
         available_months.add(commission_month)
-        commission_totals = {}
-        for row in commission_sales:
-            currency = row["currency"]
-            if not row["paid"]:
-                commission_totals[currency] = (
-                    commission_totals.get(currency, 0) + row["commission"]
-                )
+        commission_totals = _unpaid_totals(
+            commission_sales, "commission"
+        )
+        consignment_totals = _unpaid_totals(
+            consignment_sales, "consignment_commission"
+        )
+        platform_fee_totals = _unpaid_totals(
+            platform_fee_sales, "platform_fee"
+        )
         return render_template(
             "management/index.html",
             total=total,
@@ -408,6 +565,10 @@ def register(
             commission_months=sorted(available_months, reverse=True),
             commission_sales=commission_sales,
             commission_totals=commission_totals,
+            consignment_sales=consignment_sales,
+            consignment_totals=consignment_totals,
+            platform_fee_sales=platform_fee_sales,
+            platform_fee_totals=platform_fee_totals,
         )
 
     @app.get("/management/items")

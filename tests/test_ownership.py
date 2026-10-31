@@ -521,6 +521,8 @@ class OwnershipTests(unittest.TestCase):
                 "_id": ObjectId(), "sku": "LEGACY-MANAGEMENT-SALE",
                 "serial_code": "SERIAL-B", "name": "Legacy Bag",
                 "ownership": OWNERSHIP_MANAGEMENT, "status": "SOLD",
+                "source_type": "CONSIGNMENT", "cost": 800,
+                "cost_currency": "SGD",
                 "sold_record": [{
                     "sold_at": august, "sold_price": 1000,
                     "sold_currency": "SGD",
@@ -565,6 +567,15 @@ class OwnershipTests(unittest.TestCase):
                     "sold_currency": "SGD", "sold_by_role": "Admin",
                 }],
             },
+            {
+                "_id": ObjectId(), "sku": "MANAGEMENT-BUYIN-FEE",
+                "name": "Management Buy-in", "ownership": OWNERSHIP_MANAGEMENT,
+                "source_type": "BUY_IN", "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": august, "sold_price": 2000,
+                    "sold_currency": "SGD", "sold_by_role": "Admin",
+                }],
+            },
         ])
         app = self._make_app(items)
         with app.test_client() as client:
@@ -586,46 +597,79 @@ class OwnershipTests(unittest.TestCase):
         self.assertNotIn(b"Sale Price", august_page.data)
         self.assertNotIn(b"Sales:", august_page.data)
         self.assertIn(b"Commission Status", august_page.data)
+        self.assertIn(b"Consignment Commission", august_page.data)
+        self.assertIn(b"(Sold Price", august_page.data)
+        self.assertIn(b"40.00 SGD", august_page.data)
+        self.assertIn(b"Buy-in Platform Fee", august_page.data)
+        self.assertIn(b"MANAGEMENT-BUYIN-FEE", august_page.data)
+        self.assertIn(b"160.00 SGD", august_page.data)
 
     def test_admin_can_mark_management_commission_paid_and_unpaid(self):
         sold_at = datetime(2026, 8, 21, 4, 0, tzinfo=timezone.utc)
-        items = FakeInventory([{
-            "_id": ObjectId(), "sku": "COMMISSION01",
-            "serial_code": "SERIAL-COMMISSION", "name": "Commission Bag",
-            "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
-            "sold_record": [{
-                "sold_at": sold_at, "sold_price": 2500,
-                "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
-                "management_commission_amount": 25,
-                "management_commission_currency": "SGD",
-            }],
-        }])
+        items = FakeInventory([
+            {
+                "_id": ObjectId(), "sku": "COMMISSION01",
+                "serial_code": "SERIAL-COMMISSION", "name": "Commission Bag",
+                "ownership": OWNERSHIP_ADMIN, "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": sold_at, "sold_price": 2500,
+                    "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
+                    "management_commission_amount": 25,
+                    "management_commission_currency": "SGD",
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "CONSIGNMENT-COMMISSION",
+                "name": "Consignment Commission Bag",
+                "ownership": OWNERSHIP_MANAGEMENT,
+                "source_type": "CONSIGNMENT", "status": "SOLD",
+                "cost": 2000, "cost_currency": "SGD",
+                "sold_record": [{
+                    "sold_at": sold_at, "sold_price": 2500,
+                    "sold_currency": "SGD", "sold_by_role": ROLE_MANAGEMENT,
+                }],
+            },
+            {
+                "_id": ObjectId(), "sku": "PLATFORM-FEE",
+                "name": "Platform Fee Bag",
+                "ownership": OWNERSHIP_MANAGEMENT,
+                "source_type": "BUY_IN", "status": "SOLD",
+                "sold_record": [{
+                    "sold_at": sold_at, "sold_price": 2000,
+                    "sold_currency": "SGD", "sold_by_role": "Admin",
+                }],
+            },
+        ])
         payments = FakePayments()
         app = self._make_app(items, payments)
 
         with app.test_client() as client:
             self._login(client, "Admin")
             page = client.get("/admin/management-payments?month=2026-08")
-            key_match = re.search(
-                rb'name="sale_key" value="([0-9a-f]+)"', page.data
-            )
-            self.assertIsNotNone(key_match)
-            sale_key = key_match.group(1).decode()
+            payment_keys = [value.decode() for value in re.findall(
+                rb'name="payment_key" value="([^"]+)"', page.data
+            )]
+            self.assertEqual(len(payment_keys), 4)
             paid = client.post(
                 "/admin/management-payments/update",
                 data={
                     "month": "2026-08", "action": "paid",
-                    "sale_key": sale_key,
+                    "payment_key": payment_keys,
                 },
             )
             paid_page = client.get(
                 "/admin/management-payments?month=2026-08"
             )
+            self._login(client, ROLE_MANAGEMENT)
+            management_paid_page = client.get(
+                "/management?commission_month=2026-08"
+            )
+            self._login(client, "Admin")
             unpaid = client.post(
                 "/admin/management-payments/update",
                 data={
                     "month": "2026-08", "action": "unpaid",
-                    "sale_key": sale_key,
+                    "payment_key": payment_keys,
                 },
             )
             unpaid_page = client.get(
@@ -635,12 +679,26 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"COMMISSION01", page.data)
         self.assertIn(b"25.00 SGD", page.data)
+        self.assertIn(b"Consignment Commission", page.data)
+        self.assertIn(b"100.00 SGD", page.data)
+        self.assertIn(b"Buy-in Platform Fee", page.data)
+        self.assertIn(b"160.00 SGD", page.data)
         self.assertEqual(paid.status_code, 302)
-        self.assertTrue(payments.docs[0]["history"])
+        self.assertEqual(len(payments.docs), 4)
+        self.assertEqual(
+            {doc["payment_type"] for doc in payments.docs},
+            {
+                "sales_commission", "consignment_commission",
+                "buyin_platform_fee",
+            },
+        )
         self.assertIn(b">Paid</b>", paid_page.data)
+        self.assertIn(b"Consignment Commission", management_paid_page.data)
+        self.assertIn(b"Payment Status", management_paid_page.data)
+        self.assertGreaterEqual(management_paid_page.data.count(b">Paid<"), 4)
         self.assertEqual(unpaid.status_code, 302)
-        self.assertFalse(payments.docs[0]["is_paid"])
-        self.assertEqual(len(payments.docs[0]["history"]), 2)
+        self.assertTrue(all(not doc["is_paid"] for doc in payments.docs))
+        self.assertTrue(all(len(doc["history"]) == 2 for doc in payments.docs))
         self.assertIn(b">Unpaid</b>", unpaid_page.data)
 
     def test_management_can_regenerate_receipts_for_visible_sold_items(self):
