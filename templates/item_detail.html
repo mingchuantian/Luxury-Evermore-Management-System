@@ -193,6 +193,15 @@
   </div>
 
   <div class="row">
+    <div>
+      <label>{{ "寄卖时间" if item.source_type == "CONSIGNMENT" else "收货时间" }}</label>
+      <input type="hidden" name="tz_offset_min" id="edit_tz_offset_min" value="">
+      <input type="datetime-local" step="1" name="purchase_at" value="{{ item._purchase_at_local }}" required>
+    </div>
+    <div></div>
+  </div>
+
+  <div class="row">
     {% if item.status not in ["INBOUND", "REPARING", "RECEIVED", "SOLD"] %}
       <div>
         <label>状态</label>
@@ -293,6 +302,7 @@
 <script>
   const sel = document.getElementById("brand_select");
   const wrap = document.getElementById("brand_custom_wrap");
+  document.getElementById("edit_tz_offset_min").value = String((new Date()).getTimezoneOffset());
 
   function refreshBrandCustom() {
     if (sel.value === "其他") {

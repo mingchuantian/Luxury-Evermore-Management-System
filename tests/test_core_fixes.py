@@ -3,7 +3,7 @@ import unittest
 from copy import deepcopy
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from bson import ObjectId
 from flask import Flask
@@ -12,7 +12,12 @@ import luxury_app.app_factory as app_factory
 import luxury_app.shopify_maintenance as shopify_maintenance
 from luxury_app.auth import ROLE_ADMIN, ROLE_MANAGEMENT, ROLE_STAFF, require_login
 from luxury_app.routes.sales import register as register_sales
-from luxury_app.utils import parse_date_yyyy_mm_dd
+from luxury_app.routes.items import register as register_items
+from luxury_app.utils import (
+    datetimes_same_instant,
+    format_datetime_local,
+    parse_date_yyyy_mm_dd,
+)
 
 
 class FakeUsers:
@@ -212,6 +217,75 @@ class CoreFixTests(unittest.TestCase):
             parsed,
             datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc),
         )
+
+    def test_edit_datetime_helpers_handle_mongo_naive_utc(self):
+        mongo_value = datetime(2026, 11, 10, 2, 30, 0, 123456)
+        aware_value = datetime(2026, 11, 10, 2, 30, tzinfo=timezone.utc)
+        self.assertEqual(
+            format_datetime_local(mongo_value),
+            "2026-11-10T10:30:00",
+        )
+        self.assertTrue(datetimes_same_instant(mongo_value, aware_value))
+
+    def test_admin_edit_updates_purchase_time_and_writes_audit(self):
+        item_id = ObjectId()
+        original_time = datetime(2026, 11, 9, 1, 0)
+        items = FakeItems({
+            "_id": item_id,
+            "sku": "EDITTIME1",
+            "name": "Test item",
+            "brand": "Dior",
+            "seller_name": "Seller",
+            "seller_contact": "123",
+            "cost": 1000,
+            "status": "RECEIVED",
+            "note": "",
+            "serial_code": "SERIAL",
+            "tracking_number": "TRACK",
+            "accessories": "Box",
+            "purchase_at": original_time,
+            "audit": [],
+        })
+        audit_logs = MagicMock()
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        register_items(app, items, audit_logs=audit_logs)
+        payload = {
+            "name": "Test item",
+            "brand_select": "Dior",
+            "brand_custom": "",
+            "seller_name": "Seller",
+            "seller_contact": "123",
+            "cost": "1000",
+            "note": "",
+            "serial_code": "SERIAL",
+            "tracking_number": "TRACK",
+            "accessories": "Box",
+            "purchase_at": "2026-11-10T10:30:00",
+            "tz_offset_min": "-480",
+        }
+
+        with app.test_client() as client:
+            with client.session_transaction() as flask_session:
+                flask_session["user_id"] = str(ObjectId())
+                flask_session["username"] = "admin"
+                flask_session["role"] = ROLE_ADMIN
+            response = client.post(f"/items/{item_id}/update", data=payload)
+
+        self.assertEqual(response.status_code, 302)
+        expected = datetime(2026, 11, 10, 2, 30, tzinfo=timezone.utc)
+        self.assertEqual(items.doc["purchase_at"], expected)
+        item_entry = next(
+            entry for entry in items.doc["audit"]
+            if entry.get("target") == "purchase_at"
+        )
+        self.assertEqual(item_entry["from"], original_time)
+        self.assertEqual(item_entry["to"], expected)
+        global_entries = audit_logs.insert_many.call_args.args[0]
+        self.assertTrue(any(
+            entry.get("target") == "purchase_at"
+            for entry in global_entries
+        ))
 
     def test_shopify_scheduler_is_not_started_without_token(self):
         provider = shopify_maintenance.ShopifyTokenProvider(

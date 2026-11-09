@@ -33,7 +33,13 @@ from ..constants import (
     OWNERSHIP_MANAGEMENT,
 )
 from ..item_creation import create_item_from_form
-from ..utils import BUSINESS_TZ, money_int
+from ..utils import (
+    BUSINESS_TZ,
+    datetimes_same_instant,
+    format_datetime_local,
+    money_int,
+    parse_datetime_local_to_utc,
+)
 
 
 VISIBLE_OWNERSHIPS = (OWNERSHIP_ADMIN, OWNERSHIP_MANAGEMENT)
@@ -709,6 +715,9 @@ def register(
         if not item:
             return "Not found", 404
         _attach_sold_view_fields(item)
+        item["_purchase_at_local"] = format_datetime_local(
+            item.get("purchase_at") or item.get("created_at")
+        )
         return render_template(
             "management/item_detail.html",
             item=item,
@@ -726,6 +735,18 @@ def register(
             return "Not found", 404
 
         form = request.form
+        purchase_at = None
+        if "purchase_at" in form:
+            purchase_at = parse_datetime_local_to_utc(
+                form.get("purchase_at") or "",
+                form.get("tz_offset_min") or "0",
+            )
+            if not purchase_at:
+                flash("Invalid buy-in / consignment date and time", "error")
+                return redirect(url_for(
+                    "management_item_detail", item_key=item_id
+                ))
+
         set_fields = {
             "name": (form.get("name") or "").strip(),
             "brand": (
@@ -742,6 +763,10 @@ def register(
             "accessories": (form.get("accessories") or "").strip(),
             "updated_at": now(),
         }
+        if purchase_at is not None and not datetimes_same_instant(
+            item.get("purchase_at") or item.get("created_at"), purchase_at
+        ):
+            set_fields["purchase_at"] = purchase_at
         if "name_in_EN" in form:
             set_fields["name_in_EN"] = (form.get("name_in_EN") or "").strip()
         if "additional_notes_for_agreements" in form:

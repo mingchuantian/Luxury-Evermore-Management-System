@@ -66,6 +66,14 @@
     <div><label>Seller / Consignor Contact</label><input name="seller_contact" value="{{ item.seller_contact }}"></div>
   </div>
   <div class="row">
+    <div>
+      <label>{{ "Consignment Date and Time" if item.source_type == "CONSIGNMENT" else "Buy-In Date and Time" }}</label>
+      <input type="hidden" name="tz_offset_min" id="edit_tz_offset_min" value="">
+      <input type="datetime-local" step="1" name="purchase_at" value="{{ item._purchase_at_local }}" required>
+    </div>
+    <div></div>
+  </div>
+  <div class="row">
     <div><label>Status</label><input value="{{ item.status }}" disabled></div>
     <div><label>Cost (whole number)</label><input name="cost" value="{{ item.cost }}"></div>
   </div>
@@ -115,6 +123,7 @@
 
   const brandSelect = document.getElementById("brand_select");
   const brandCustomWrap = document.getElementById("brand_custom_wrap");
+  document.getElementById("edit_tz_offset_min").value = String((new Date()).getTimezoneOffset());
   function refreshCustomBrand() {
     if (brandSelect.value === "OTHER") {
       brandCustomWrap.style.display = "block";

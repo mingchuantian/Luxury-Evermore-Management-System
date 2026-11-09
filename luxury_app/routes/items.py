@@ -23,7 +23,9 @@ from ..constants import (
 )
 from ..item_creation import create_item_from_form
 from ..utils import (
+    datetimes_same_instant,
     find_date_yyyy_mm_dd_in_text,
+    format_datetime_local,
     is_object_id,
     money_int,
     parse_datetime_local_to_utc,
@@ -250,6 +252,9 @@ def register(app, items, audit_logs=None):
             return "未找到该商品", 404
 
         _attach_sold_view_fields(it)
+        it["_purchase_at_local"] = format_datetime_local(
+            it.get("purchase_at") or it.get("created_at")
+        )
 
         return render_template(
             "item_detail.html",
@@ -452,6 +457,16 @@ def register(app, items, audit_logs=None):
         tracking_number = request.form.get("tracking_number", "").strip()
         accessories = request.form.get("accessories", "").strip()
 
+        purchase_at = None
+        if "purchase_at" in form:
+            purchase_at = parse_datetime_local_to_utc(
+                form.get("purchase_at") or "",
+                form.get("tz_offset_min") or "0",
+            )
+            if not purchase_at:
+                flash("收货/寄卖时间格式无效", "error")
+                return redirect(url_for("item_detail", item_key=item_id))
+
         brand_select = request.form.get("brand_select", "").strip()
         brand_custom = request.form.get("brand_custom", "").strip()
         brand = brand_custom if brand_select == "其他" else brand_select
@@ -482,6 +497,10 @@ def register(app, items, audit_logs=None):
             set_fields["name_in_EN"] = name_in_EN
         if additional_notes_for_agreements is not None:
             set_fields["additional_notes_for_agreements"] = additional_notes_for_agreements
+        if purchase_at is not None and not datetimes_same_instant(
+            it.get("purchase_at") or it.get("created_at"), purchase_at
+        ):
+            set_fields["purchase_at"] = purchase_at
 
         # Optional fields only if present in form
         profit_raw = form.get("profit", None)

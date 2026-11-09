@@ -862,6 +862,8 @@ class OwnershipTests(unittest.TestCase):
             "profit_currency": "RMB",
             "note": "New note",
             "additional_notes_for_agreements": "Agreement note",
+            "purchase_at": "2026-08-22T12:30:00",
+            "tz_offset_min": "-480",
         }
         with app.test_client() as client:
             self._login(client, ROLE_MANAGEMENT)
@@ -872,6 +874,7 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn(b"Seller / Consignor Contact", detail.data)
         self.assertIn(b"Listing Price", detail.data)
         self.assertIn(b"Profit Currency", detail.data)
+        self.assertIn(b'name="purchase_at"', detail.data)
         self.assertEqual(response.status_code, 302)
         updated = items.docs[0]
         self.assertEqual(updated["name"], "New Name")
@@ -881,6 +884,14 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(updated["cost"], 2000)
         self.assertEqual(updated["listing_price"], 3000)
         self.assertEqual(updated["profit"], 500)
+        self.assertEqual(
+            updated["purchase_at"],
+            datetime(2026, 8, 22, 4, 30, tzinfo=timezone.utc),
+        )
+        self.assertTrue(any(
+            entry.get("target") == "purchase_at"
+            for entry in updated.get("audit", [])
+        ))
         self.assertEqual(updated["status"], "ON_SHELF")
         self.assertEqual(updated["ownership"], OWNERSHIP_MANAGEMENT)
 

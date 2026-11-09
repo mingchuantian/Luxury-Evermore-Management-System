@@ -62,6 +62,40 @@ def parse_datetime_local_to_utc(dt_local_str: str, tz_offset_min: str):
     return dt_local.replace(tzinfo=timezone.utc) + timedelta(minutes=offset)
 
 
+def format_datetime_local(value) -> str:
+    """Format a stored UTC datetime for a UTC+8 datetime-local input."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return ""
+    if not isinstance(value, datetime):
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BUSINESS_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def datetimes_same_instant(left, right) -> bool:
+    """Compare Mongo naive-UTC and timezone-aware datetimes safely."""
+    if not isinstance(left, datetime) or not isinstance(right, datetime):
+        return left == right
+
+    def as_utc(value):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    # datetime-local is second-precision, while imported/Mongo values may
+    # contain microseconds that the form cannot display or preserve.
+    return (
+        as_utc(left).replace(microsecond=0)
+        == as_utc(right).replace(microsecond=0)
+    )
+
+
 def _brand_prefix(brand: str) -> str:
     b = (brand or "").strip()
     if not b:
