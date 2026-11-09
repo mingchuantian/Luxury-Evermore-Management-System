@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .check-heading { display:flex; gap:12px; align-items:center; justify-content:space-between; }
+  .check-heading h2 { margin-bottom:4px; }
+  .check-empty { padding:22px; text-align:center; background:#fff; border:1px solid var(--border); }
+  .check-active { color:#8a6100; font-weight:700; }
+  .check-complete { color:#28623b; font-weight:700; }
+  .check-pages { margin-top:14px; display:flex; gap:12px; align-items:center; }
+  @media (max-width:720px) {
+    .check-heading { align-items:flex-start; flex-direction:column; }
+    .check-heading form, .check-heading button { width:100%; }
+  }
+</style>
+
+<div class="check-heading">
+  <div>
+    <h2>盘查库存</h2>
+    <p class="muted">每次新建一个盘查 Session，连续扫描全店商品；结束后系统会列出未扫描到的“已到店”商品。</p>
+  </div>
+  <form method="post" action="{{ url_for('inventory_check_start') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn" type="submit">开始新盘查</button>
+  </form>
+</div>
+
+<h3>盘查历史</h3>
+{% if inventory_sessions %}
+<table>
+  <thead>
+    <tr>
+      <th>开始时间</th>
+      <th>结束时间</th>
+      <th>操作人</th>
+      <th>已扫描</th>
+      <th>未扫描到</th>
+      <th>状态</th>
+      <th>操作</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for check in inventory_sessions %}
+    <tr>
+      <td>{{ check.started_at|dt8 }}</td>
+      <td>{{ check.completed_at|dt8 if check.completed_at else "-" }}</td>
+      <td>{{ check.started_by.username or "-" }}</td>
+      <td>{{ check.scanned_skus|length }}</td>
+      <td>{{ check.missing_count if check.status == "completed" else "-" }}</td>
+      <td>
+        {% if check.status == "completed" %}
+          <span class="check-complete">已完成</span>
+        {% else %}
+          <span class="check-active">进行中</span>
+        {% endif %}
+      </td>
+      <td><a href="{{ url_for('inventory_check_session', session_id=check._id|string) }}">{{ "查看结果" if check.status == "completed" else "继续盘查" }}</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <div class="check-empty">还没有盘查记录。</div>
+{% endif %}
+
+{% if pages > 1 %}
+<div class="check-pages">
+  {% if page > 1 %}<a href="{{ url_for('inventory_check_history', page=page-1) }}">上一页</a>{% endif %}
+  <span>第 {{ page }} / {{ pages }} 页</span>
+  {% if page < pages %}<a href="{{ url_for('inventory_check_history', page=page+1) }}">下一页</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

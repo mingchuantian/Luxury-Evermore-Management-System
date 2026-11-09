@@ -9,6 +9,7 @@ from .management import register as register_management
 from .notes import register as register_notes
 from .qr_check import register as register_qr_check
 from .shopify_files import register as register_shopify_files
+from .inventory_check import register as register_inventory_check
 
 
 def register_all(
@@ -23,6 +24,7 @@ def register_all(
     maintenance_items_view=None,
     maintenance_logs=None,
     background_jobs=None,
+    inventory_check_sessions=None,
 ):
     register_auth(app, users)
     register_users(app, users)
@@ -48,5 +50,7 @@ def register_all(
     register_notes(app, notes)
     register_qr_check(app, items)
     register_shopify_files(app)
+    if inventory_check_sessions is not None:
+        register_inventory_check(app, items, inventory_check_sessions)
 
 

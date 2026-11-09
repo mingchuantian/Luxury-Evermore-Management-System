@@ -1,0 +1,301 @@
+{% extends "layout.html" %}
+{% block content %}
+{% set active = check_session.status == "active" %}
+<style>
+  .stocktake-page { max-width:760px; margin:0 auto; }
+  .stocktake-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .stocktake-top h2 { margin:0 0 4px; }
+  .stocktake-camera { overflow:hidden; background:#111; border-radius:8px; min-height:280px; margin-top:14px; }
+  #stocktake-reader { width:100%; }
+  #stocktake-reader video { object-fit:cover; }
+  .stocktake-controls { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+  .stocktake-feedback { margin:12px 0; padding:18px; border:2px solid #9bacc0; border-radius:8px; background:#eef2f5; transition:background .12s; }
+  .stocktake-feedback.success { background:#d9f4e1; border-color:#4e9c64; }
+  .stocktake-feedback.duplicate { background:#fff2cc; border-color:#c99a2e; }
+  .stocktake-feedback.error { background:#f7dfdf; border-color:#c66d6d; }
+  .stocktake-feedback-title { font-size:22px; font-weight:700; }
+  .stocktake-sku { font-size:20px; font-weight:700; letter-spacing:.06em; }
+  .stocktake-manual { display:flex; gap:8px; margin:12px 0; }
+  .stocktake-manual input { flex:1; min-width:0; }
+  .scan-list { padding-left:0; list-style:none; }
+  .scan-list li { padding:9px 0; border-bottom:1px solid var(--border); }
+  .missing-count { font-size:18px; }
+  .status-RECEIVED { color:#28623b; }
+  @media (max-width:720px) {
+    .stocktake-page { width:100%; }
+    .stocktake-top { flex-direction:column; }
+    .stocktake-camera { min-height:250px; }
+    .stocktake-feedback { padding:15px; }
+    .stocktake-manual { align-items:stretch; }
+  }
+</style>
+
+<div class="stocktake-page">
+  <div class="stocktake-top">
+    <div>
+      <h2>{{ "正在盘查库存" if active else "盘查结果" }}</h2>
+      <div class="muted">开始：{{ check_session.started_at|dt8 }} ｜ 操作人：{{ check_session.started_by.username or "-" }}</div>
+      {% if not active %}<div class="muted">结束：{{ check_session.completed_at|dt8 }}</div>{% endif %}
+    </div>
+    <a href="{{ url_for('inventory_check_history') }}">返回盘查历史</a>
+  </div>
+
+  {% if active %}
+    <p class="muted">摄像头会持续识别；每个 SKU 在本次 Session 中只记录一次。识别成功后会发出提示音并震动，可立即扫描下一个。</p>
+    <div class="stocktake-camera"><div id="stocktake-reader"></div></div>
+    <div class="stocktake-controls">
+      <button class="btn" id="start-camera" type="button">开启后置摄像头</button>
+      <button class="btn" id="stop-camera" type="button" disabled>停止摄像头</button>
+      <span class="muted" id="camera-message">正在请求摄像头权限…</span>
+    </div>
+    <form class="stocktake-manual" id="manual-form">
+      <input id="manual-value" autocomplete="off" placeholder="也可以输入 SKU 或粘贴 QR 链接">
+      <button class="btn" type="submit">记录</button>
+    </form>
+    <div class="stocktake-feedback" id="stocktake-feedback" aria-live="assertive">
+      <div class="stocktake-feedback-title">等待扫描</div>
+      <div class="muted">将商品 QR Code 放入摄像头画面。</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <h3>实时记录</h3>
+      <b id="scan-count">{{ check_session.scanned_skus|length }} 件</b>
+    </div>
+    <ul class="scan-list" id="scan-list">
+      {% for scan in (check_session.scans or [])|reverse %}
+        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span></li>
+      {% else %}
+        <li class="muted" id="empty-scan-row">尚无扫描记录</li>
+      {% endfor %}
+    </ul>
+
+    <form method="post" action="{{ url_for('inventory_check_complete', session_id=check_session._id|string) }}" onsubmit="return confirm('确认结束本次盘查并生成未扫描清单？结束后不能继续扫描。');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn" type="submit">结束盘查并生成结果</button>
+    </form>
+  {% else %}
+    <div class="item-summary">
+      <p>本次共扫描：<strong>{{ check_session.scanned_skus|length }}</strong> 件</p>
+      <p>结束时状态为“已到店（RECEIVED）”：<strong>{{ check_session.eligible_count or 0 }}</strong> 件</p>
+      <p>其中已扫描：<strong>{{ check_session.received_scanned_count or 0 }}</strong> 件</p>
+      <p class="missing-count">未扫描到：<strong>{{ check_session.missing_count or 0 }}</strong> 件</p>
+    </div>
+
+    <h3>已到店但未扫描到的商品</h3>
+    {% if check_session.missing_items %}
+    <table>
+      <thead><tr><th>SKU</th><th>商品名称</th><th>品牌</th><th>包身编码</th></tr></thead>
+      <tbody>
+        {% for item in check_session.missing_items %}
+        <tr><td><b>{{ item.sku }}</b></td><td>{{ item.name or "-" }}</td><td>{{ item.brand or "-" }}</td><td>{{ item.serial_code or "-" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="msg ok">本次盘查没有遗漏任何“已到店”商品。</div>
+    {% endif %}
+
+    <h3>本次全部扫描记录</h3>
+    <table>
+      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th></tr></thead>
+      <tbody>
+        {% for scan in (check_session.scans or [])|reverse %}
+        <tr><td>{{ scan.scanned_at|dt8 }}</td><td><b>{{ scan.sku }}</b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td></tr>
+        {% else %}
+        <tr><td colspan="4">没有扫描记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+{% if active %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(() => {
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const scanUrl = {{ url_for('inventory_check_scan', session_id=check_session._id|string)|tojson }};
+  const feedback = document.getElementById("stocktake-feedback");
+  const scanList = document.getElementById("scan-list");
+  const scanCount = document.getElementById("scan-count");
+  const startButton = document.getElementById("start-camera");
+  const stopButton = document.getElementById("stop-camera");
+  const cameraMessage = document.getElementById("camera-message");
+  const manualForm = document.getElementById("manual-form");
+  const manualValue = document.getElementById("manual-value");
+  const seen = new Set({{ (check_session.scanned_skus or [])|tojson }});
+  let scanner = null;
+  let cameraRunning = false;
+  let requestBusy = false;
+  let lastDecodedSku = "";
+  let lastDecodedAt = 0;
+  let audioContext = null;
+
+  function escapeHtml(value) {
+    const node = document.createElement("div");
+    node.textContent = value == null ? "" : String(value);
+    return node.innerHTML;
+  }
+
+  function skuFromQr(rawValue) {
+    const value = String(rawValue || "").trim();
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (host !== "luxuryevermore.com" || parts.length !== 1) return "";
+      const sku = decodeURIComponent(parts[0]).trim().toUpperCase();
+      return /^[A-Z0-9_-]{2,64}$/.test(sku) ? sku : "";
+    } catch (_) { return ""; }
+  }
+
+  function skuFromManual(rawValue) {
+    const raw = String(rawValue || "").trim().toUpperCase();
+    return skuFromQr(rawValue) || (/^[A-Z0-9_-]{2,64}$/.test(raw) ? raw : "");
+  }
+
+  function ensureAudio() {
+    if (!audioContext) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) audioContext = new AudioContext();
+    }
+    if (audioContext?.state === "suspended") audioContext.resume().catch(() => {});
+  }
+
+  function beep() {
+    ensureAudio();
+    if (!audioContext) return;
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(.12, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.001, audioContext.currentTime + .12);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + .12);
+  }
+
+  function show(kind, title, sku, detail) {
+    feedback.className = `stocktake-feedback ${kind}`;
+    feedback.innerHTML = `<div class="stocktake-feedback-title">${escapeHtml(title)}</div>${sku ? `<div class="stocktake-sku">${escapeHtml(sku)}</div>` : ""}${detail ? `<div>${escapeHtml(detail)}</div>` : ""}`;
+  }
+
+  function addScan(scan, count) {
+    document.getElementById("empty-scan-row")?.remove();
+    const row = document.createElement("li");
+    row.dataset.sku = scan.sku;
+    row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>`;
+    scanList.prepend(row);
+    scanCount.textContent = `${count} 件`;
+  }
+
+  async function recordSku(sku) {
+    const time = Date.now();
+    if (requestBusy || (sku === lastDecodedSku && time - lastDecodedAt < 1800)) return;
+    lastDecodedSku = sku;
+    lastDecodedAt = time;
+    if (seen.has(sku)) {
+      show("duplicate", "已扫描过，本次不重复记录", sku, "请继续扫描下一件商品。");
+      if (navigator.vibrate) navigator.vibrate(45);
+      return;
+    }
+
+    requestBusy = true;
+    show("", "正在记录", sku, "");
+    try {
+      const response = await fetch(scanUrl, {
+        method: "POST",
+        cache: "no-store",
+        headers: {"Accept":"application/json", "Content-Type":"application/json", "X-CSRF-Token":csrf},
+        body: JSON.stringify({sku})
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.message || "记录失败");
+      if (!result.found) {
+        show("error", "数据库中找不到这个 SKU", result.sku || sku, "未计入本次盘查。");
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+      } else if (result.duplicate) {
+        seen.add(sku);
+        show("duplicate", "已扫描过，本次不重复记录", sku, "请继续扫描下一件商品。");
+      } else {
+        seen.add(sku);
+        addScan(result.scan, result.scan_count);
+        const detail = result.scan.status === "RECEIVED"
+          ? (result.scan.name || "已到店商品")
+          : `${result.scan.name || "商品"}（当前状态：${result.scan.status}）`;
+        show("success", "✓ 扫描成功", sku, detail);
+        beep();
+        if (navigator.vibrate) navigator.vibrate(80);
+      }
+    } catch (error) {
+      show("error", "记录失败", sku, error.message || "请重试");
+      if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    } finally {
+      requestBusy = false;
+    }
+  }
+
+  function onScanSuccess(decodedText) {
+    const sku = skuFromQr(decodedText);
+    if (!sku) {
+      show("error", "无法识别", "", "这不是 luxuryevermore.com/{SKU} 格式的 QR Code。");
+      return;
+    }
+    recordSku(sku);
+  }
+
+  async function startCamera() {
+    if (cameraRunning) return;
+    ensureAudio();
+    if (typeof Html5Qrcode === "undefined") {
+      cameraMessage.textContent = "扫码组件加载失败，请刷新页面或使用手动记录。";
+      return;
+    }
+    startButton.disabled = true;
+    cameraMessage.textContent = "正在请求摄像头权限…";
+    try {
+      scanner = scanner || new Html5Qrcode("stocktake-reader", false);
+      await scanner.start(
+        {facingMode:"environment"},
+        {fps:18, qrbox:{width:250,height:250}, aspectRatio:1.0},
+        onScanSuccess,
+        () => {}
+      );
+      cameraRunning = true;
+      stopButton.disabled = false;
+      cameraMessage.textContent = "后置摄像头已开启，可连续扫描。";
+    } catch (_) {
+      startButton.disabled = false;
+      cameraMessage.textContent = "无法开启摄像头，请允许权限后重试；也可手动输入。";
+    }
+  }
+
+  async function stopCamera() {
+    if (!scanner || !cameraRunning) return;
+    try { await scanner.stop(); } catch (_) {}
+    cameraRunning = false;
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    cameraMessage.textContent = "摄像头已停止。";
+  }
+
+  manualForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const sku = skuFromManual(manualValue.value);
+    if (!sku) {
+      show("error", "无法识别", "", "请输入有效 SKU 或粘贴商品 QR 链接。");
+      return;
+    }
+    recordSku(sku);
+    manualValue.select();
+  });
+  startButton.addEventListener("click", startCamera);
+  stopButton.addEventListener("click", stopCamera);
+  window.addEventListener("beforeunload", () => {
+    if (scanner && cameraRunning) scanner.stop().catch(() => {});
+  });
+  startCamera();
+})();
+</script>
+{% endif %}
+{% endblock %}

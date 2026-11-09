@@ -68,8 +68,14 @@ def create_app():
     management_commission_payments = db["management_commission_payments"]
     background_jobs = db["background_jobs"]
     items_view_maintenance_logs = db["items_view_maintenance_logs"]
+    inventory_check_sessions = db["inventory_check_sessions"]
     ensure_indexes(
-        items, users, audit_logs, notes, management_commission_payments
+        items,
+        users,
+        audit_logs,
+        notes,
+        management_commission_payments,
+        inventory_check_sessions,
     )
     ensure_item_indexes(items_view)
     try:
@@ -94,6 +100,7 @@ def create_app():
         maintenance_items_view=items_view,
         maintenance_logs=items_view_maintenance_logs,
         background_jobs=background_jobs,
+        inventory_check_sessions=inventory_check_sessions,
     )
 
     # Must login to browse & operate
