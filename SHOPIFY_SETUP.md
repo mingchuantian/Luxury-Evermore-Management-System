@@ -106,16 +106,28 @@ Returning a sold item to stock does not restore Shopify inventory.
 
 ## Shopify库存更新 (Admin menu)
 
-Every 2 hours (and on "手动刷新") the app scans all Shopify product variants,
-read-only, and lists those that are **Active** and still sellable (inventory
-above 0, or inventory not tracked) but whose SKU is either SOLD in this system
-or does not exist in this system. Draft and archived products are ignored.
-The dashboard shows a red alert and the menu shows a red count while the list
-is not empty.
+Every 2 hours (and on "手动刷新") the app scans all Shopify product variants and
+the items collection, read-only, and lists four kinds of mismatch:
 
-Per row, Admin can open the Shopify admin link (draft the product, duplicate
-it and enter the new SKU when a same-style item exists) or click
-"已无同款，商品设置库存为0", which sets that variant's available inventory to 0.
+- 红 系统内已售出，但 Shopify 上还在卖 (Active, inventory above 0 or not
+  tracked). Row button "已无同款，商品设置库存为0" sets that variant's
+  available inventory to 0.
+- 橙 Shopify 上在卖，但系统中无此SKU (usually a typo in the Shopify SKU).
+- 蓝 系统内上架在售，但 Shopify 上买不了 (inventory 0, or Draft/Archived).
+- 紫 系统内上架在售，但 Shopify 上找不到此SKU (SKU changed or product deleted
+  in Shopify). Links to the product if the item still remembers it from the
+  hourly sync, otherwise to a Shopify admin search by the English name.
+
+Only the red kind has a button; the others are fixed in Shopify or by
+updating the item's status. The dashboard shows a red alert with the four
+counts and the menu shows a red total while the list is not empty. Selling an
+item that was linked to Shopify but whose SKU can no longer be found there
+shows a red warning.
+
+**Nothing is stored in MongoDB.** The list is computed from live data and kept
+only in the web process's memory; restarting the app recomputes it. If the app
+runs several worker processes, each keeps its own copy and computes it on its
+own schedule, so counts can briefly differ between workers.
 
 Optional environment variables:
 
@@ -124,6 +136,6 @@ SHOPIFY_STOCK_CHECK_ENABLED=true
 SHOPIFY_STOCK_CHECK_INTERVAL_HOURS=2
 ```
 
-The scan never writes to the items collection. The latest list and the
-schedule are stored on the `shopify_stock_check` document in
-`background_jobs`, so every web worker shows the same page.
+The inventory list (库存列表) shows the time of the last hourly Shopify sync at
+the top (read from the sync's existing lease record); it turns red if the last
+run failed or no run finished within 2 × interval + 30 minutes.

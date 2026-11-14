@@ -4,78 +4,121 @@
   th.col-img, td.col-img { padding: 0; width: 52px; }
   td.col-img { text-align: center; }
   td.col-img img { display: block; margin: 2px auto; width: 68px; height: 68px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; }
-  /* Same look as “利润未更新” in 库存列表 */
-  tr.stock-mismatch td { background: #ffeef0 !important; }
-  .stock-warning { color: #b00020; font-weight: 700; }
+  /* 红：系统已售（同“利润未更新”） 橙：系统无此SKU 蓝：Shopify买不了 紫：Shopify找不到 */
+  tr.stock-sold td { background: #ffeef0 !important; }
+  .stock-sold-text { color: #b00020; font-weight: 700; }
+  tr.stock-missing td { background: #fff4e0 !important; }
+  .stock-missing-text { color: #b45309; font-weight: 700; }
+  tr.stock-unsellable td { background: #e9f1ff !important; }
+  .stock-unsellable-text { color: #1d4ed8; font-weight: 700; }
+  tr.stock-notfound td { background: #f3e8ff !important; }
+  .stock-notfound-text { color: #7e22ce; font-weight: 700; }
+  .stock-legend td { padding: 4px 8px; }
+  .stock-filter a { margin-right: 12px; }
+  .stock-filter a.active { text-decoration: underline; }
 </style>
-{% if state.running %}<script>setTimeout(() => location.reload(), 5000);</script>{% endif %}
+{% if state.running %}<script>setTimeout(() => location.reload(), 3000);</script>{% endif %}
+
+{% set SITUATION = {
+  "sold": "系统内已售出，但 Shopify 上还在卖",
+  "missing": "Shopify 上在卖，但系统中无此SKU",
+  "unsellable": "系统内上架在售，但 Shopify 上买不了",
+  "notfound": "系统内上架在售，但 Shopify 上找不到此SKU",
+} %}
+{% set HOWTO = {
+  "sold": "有同款 → 通过后台链接把当前商品改为 Draft，再 Duplicate 并填写新 SKU；没有同款 → 点“已无同款，商品设置库存为0”",
+  "missing": "大概率是 Shopify 上的 SKU 填错了 → 通过后台链接改为正确的 SKU",
+  "unsellable": "通过后台链接把库存改回 1 / 改为 Active；如果实物已不在售，请在系统中更新状态",
+  "notfound": "SKU 可能在 Shopify 被改过或商品被删除 → 在 Shopify 中把 SKU 改回系统的 SKU；如果实物已不在售，请在系统中更新状态",
+} %}
+{% set SHORT = {"sold": "系统内已售出", "missing": "系统中无此SKU", "unsellable": "Shopify上买不了", "notfound": "Shopify上找不到"} %}
 
 <h2>Shopify库存更新</h2>
-<p class="muted">
-  列出 Shopify 中状态为 Active、仍可购买，但在本系统里已售出或找不到对应 SKU 的商品。
-  有同款：通过后台链接把当前商品改为 Draft，再 Duplicate 并填写新 SKU；没有同款：点“已无同款，商品设置库存为0”。
-</p>
+<table class="stock-legend" style="margin-bottom:12px;">
+  {% for key in ["sold", "missing", "unsellable", "notfound"] %}
+    <tr class="stock-{{ key }}">
+      <td class="stock-{{ key }}-text">{{ SITUATION[key] }}</td>
+      <td class="muted">{{ HOWTO[key] }}</td>
+    </tr>
+  {% endfor %}
+</table>
 
 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
   <form method="post" action="{{ url_for('shopify_stock_refresh') }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn" type="submit" {% if state.running %}disabled{% endif %}>{{ "刷新中…" if state.running else "手动刷新" }}</button>
+    <button class="btn" type="submit" {% if state.running %}disabled{% endif %}>{{ "计算中…" if state.running else "手动刷新" }}</button>
   </form>
   <span class="muted">
-    每{{ interval_label }}小时自动更新
-    {% if state.last_success_at %} · 上次更新：{{ state.last_success_at|dt8 }}{% endif %}
-    {% if state.next_run_at %} · 下次自动更新：{{ state.next_run_at|dt8 }}{% endif %}
+    每{{ interval_label }}小时自动更新 · 结果按 Shopify 和系统的实时数据计算，不保存到数据库
+    {% if state.computed_at %} · 上次计算：{{ state.computed_at|dt8 }}{% endif %}
+    {% if state.next_run_at %} · 下次自动计算：{{ state.next_run_at|dt8 }}{% endif %}
   </span>
 </div>
 {% if state.last_error %}
-  <p class="stock-warning">最近一次刷新失败（列表为上次成功结果）：{{ state.last_error }}</p>
+  <p class="stock-sold-text">最近一次计算失败（列表为上次成功结果）：{{ state.last_error }}</p>
 {% endif %}
 
-{% if not state.last_success_at %}
-  <p class="muted">{{ "首次检查进行中…" if state.running else "尚未检查。点“手动刷新”立即检查。" }}</p>
-{% elif not rows %}
-  <p>✅ 没有需要更新的商品。</p>
+{% if not state.computed_at %}
+  <p class="muted">{{ "正在计算…" if state.running else "尚未计算。点“手动刷新”立即计算。" }}</p>
+{% elif not all_rows %}
+  <p>✅ 没有需要处理的商品。</p>
 {% else %}
-  <p><b>{{ rows|length }}</b> 个商品需要更新 Shopify SKU</p>
+  <p class="stock-filter">
+    共 <b>{{ all_rows|length }}</b> 个商品需要处理：
+    <a href="{{ url_for('shopify_stock_page') }}" class="{{ 'active' if not reason }}">全部 {{ all_rows|length }}</a>
+    {% for key in ["sold", "missing", "unsellable", "notfound"] %}
+      <a href="{{ url_for('shopify_stock_page', reason=key) }}" class="stock-{{ key }}-text {{ 'active' if reason == key }}">{{ SHORT[key] }} {{ counts[key] }}</a>
+    {% endfor %}
+  </p>
+  {% if not rows %}
+    <p class="muted">这一类没有商品。</p>
+  {% else %}
   <table>
     <tr>
       <th class="col-img">图片</th><th>SKU</th><th>Shopify 标题</th><th>系统商品</th>
       <th>前台链接</th><th>后台链接</th><th>操作</th>
     </tr>
     {% for row in rows %}
-      <tr class="stock-mismatch">
+      <tr class="stock-{{ row.reason }}">
         <td class="col-img">
           {% if row.image %}<img src="{{ row.image|e }}" alt="shopify image" loading="lazy" referrerpolicy="no-referrer">{% endif %}
         </td>
         <td class="muted">{{ row.sku or "（无 SKU）" }}</td>
         <td>
           {{ row.shopify_title }}
-          <div class="stock-warning">系统内已sold或无此产品，shopify需更新sku或下架</div>
+          <div class="stock-{{ row.reason }}-text">{{ SITUATION.get(row.reason, "") }}{% if row.detail %}（{{ row.detail }}）{% endif %}</div>
         </td>
         <td>
-          {% if row.reason == "sold" %}
-            <a href="{{ url_for('item_detail', item_key=row.sku) }}" target="_blank" rel="noopener noreferrer">{{ row.system_name or row.sku }}</a>
-            <div class="muted">已售出</div>
+          {% if row.reason == "missing" %}
+            <span class="stock-missing-text">系统中无此SKU</span>
           {% else %}
-            <span class="muted">系统中无此 SKU</span>
+            <a href="{{ url_for('item_detail', item_key=row.sku) }}" target="_blank" rel="noopener noreferrer">{{ row.system_name or row.sku }}</a>
+            <div class="muted">{{ "已售出" if row.reason == "sold" else "上架在售" }}</div>
           {% endif %}
         </td>
         <td>{% if row.storefront_url %}<a href="{{ row.storefront_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
-        <td>{% if row.admin_url %}<a href="{{ row.admin_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
+        <td>{% if row.admin_url %}<a href="{{ row.admin_url }}" target="_blank" rel="noopener noreferrer">{{ row.admin_link_label or "打开" }}</a>{% endif %}</td>
         <td>
-          {% if row.tracked %}
+          {% if row.reason == "sold" and row.tracked %}
             <form method="post" action="{{ url_for('shopify_stock_zero') }}"
                   onsubmit="return confirm('确认已无同款？将把 Shopify 中该商品的库存设置为 0。');">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <input type="hidden" name="variant_id" value="{{ row.variant_id }}">
               <button class="btn" type="submit">已无同款，商品设置库存为0</button>
             </form>
+          {% elif row.reason == "sold" %}
+            <span class="stock-sold-text">未开启库存追踪，请在后台改为 Draft</span>
+          {% elif row.reason == "missing" %}
+            <span class="muted">请在后台修改SKU</span>
+          {% elif row.reason == "unsellable" %}
+            <span class="muted">请在后台改库存 / 状态</span>
           {% else %}
-            <span class="stock-warning">未开启库存追踪，请在后台改为 Draft</span>
+            <span class="muted">请在 Shopify 检查 SKU，或在系统中更新状态</span>
           {% endif %}
         </td>
       </tr>
     {% endfor %}
   </table>
+  {% endif %}
 {% endif %}
 {% endblock %}

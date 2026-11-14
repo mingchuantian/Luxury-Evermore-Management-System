@@ -6,6 +6,7 @@
   {% if shopify_stock_alert_count %}
     <div style="border:2px solid #b00020; background:#ffeef0; color:#b00020; border-radius:6px; padding:10px 14px; margin:10px 0; font-weight:700;">
       ⚠️ {{ shopify_stock_alert_count }}个商品需要更新shopify sku
+      <span style="font-weight:400;">（系统内已售出 {{ shopify_stock_counts.sold }} · 系统中无此SKU {{ shopify_stock_counts.missing }} · Shopify上买不了 {{ shopify_stock_counts.unsellable }} · Shopify上找不到 {{ shopify_stock_counts.notfound }}）</span>
       <a href="/shopify-stock" style="color:#b00020; margin-left:8px;">去处理 →</a>
     </div>
   {% endif %}

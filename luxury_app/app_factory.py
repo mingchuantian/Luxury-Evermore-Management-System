@@ -124,9 +124,9 @@ def create_app():
         import logging
         logging.getLogger(__name__).error(f"Failed to start Shopify maintenance scheduler: {e}", exc_info=True)
 
-    # Shopify库存更新: every 2 hours, read-only scan; never blocks Flask startup.
+    # Shopify库存更新: every 2 hours, read-only scan kept in memory (no DB writes).
     try:
-        start_shopify_stock_check_scheduler(items, background_jobs)
+        start_shopify_stock_check_scheduler(items)
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(

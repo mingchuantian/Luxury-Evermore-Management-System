@@ -38,6 +38,7 @@ from consignment_receipt_template.consignment_settlement_generation import (
 )
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from .sales import _sync_sold_to_shopify
+from .. import shopify_maintenance
 
 
 def register(app, items, audit_logs=None):
@@ -99,6 +100,49 @@ def register(app, items, audit_logs=None):
         sr = doc.get("sold_record") or []
         doc["_sold"] = sr[-1] if sr else {}
         return doc
+
+    def _shopify_sync_info():
+        """Last hourly Shopify→system sync for the collection this user sees."""
+        from datetime import datetime
+
+        if (
+            not shopify_maintenance.SYNC_ENABLED
+            or shopify_maintenance.TOKEN_PROVIDER.configuration_error()
+        ):
+            return {"enabled": False}
+        try:
+            jobs = items.database["background_jobs"]
+            doc = jobs.find_one(
+                {"_id": shopify_maintenance._collection_job_lock_id(items)}
+            ) or {}
+        except Exception:
+            return None
+        now_at = datetime.now(timezone.utc)
+
+        def aware(value):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value if isinstance(value, datetime) else None
+
+        last_at = aware(doc.get("finished_at"))
+        lease_until = aware(doc.get("lease_until"))
+        try:
+            interval = float(
+                doc.get("schedule_interval_hours")
+                or shopify_maintenance.SYNC_INTERVAL_HOURS
+            )
+        except (TypeError, ValueError):
+            interval = shopify_maintenance.SYNC_INTERVAL_HOURS
+        stale_after = timedelta(hours=interval * 2 + 0.5)
+        return {
+            "enabled": True,
+            "last_at": last_at,
+            "ok": doc.get("last_success") is not False,
+            "running": bool(doc.get("owner")) and bool(lease_until and lease_until > now_at),
+            "interval_label": f"{interval:g}",
+            "stale": last_at is None or now_at - last_at > stale_after,
+            "stale_hours": f"{stale_after.total_seconds() / 3600:g}",
+        }
 
     # ---------------- Items 列表（全文搜索）----------------
     @app.get("/items")
@@ -191,6 +235,7 @@ def register(app, items, audit_logs=None):
             _attach_sold_view_fields(d)
         return render_template(
             "items.html",
+            shopify_sync=_shopify_sync_info(),
             items=docs,
             STATUS=STATUS,
             STATUS_ZH=STATUS_ZH,
@@ -724,7 +769,7 @@ def register(app, items, audit_logs=None):
 
         push_item_audits(items, ObjectId(item_id), entries)
         insert_audit_logs(audit_logs, entries)
-        _sync_sold_to_shopify(sku)
+        _sync_sold_to_shopify(sku, was_linked=it.get("shopify_sku_exist") is True)
         return "", 204
 
     # ---------------- 到达/回滚工作流 ----------------

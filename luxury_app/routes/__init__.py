@@ -53,12 +53,9 @@ def register_all(
     register_shopify_files(app)
     if inventory_check_sessions is not None:
         register_inventory_check(app, items, inventory_check_sessions)
-    if background_jobs is not None:
-        # Shopify库存更新: always the real items collection, never items_view.
-        register_shopify_stock_check(
-            app,
-            management_items if management_items is not None else items,
-            background_jobs,
-        )
+    # Shopify库存更新: always the real items collection, never items_view.
+    register_shopify_stock_check(
+        app, management_items if management_items is not None else items
+    )
 
 

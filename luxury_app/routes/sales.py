@@ -229,11 +229,13 @@ def _process_sale(
     push_item_audits(items, oid, entries)
     insert_audit_logs(audit_logs, entries)
     flash("Marked as sold" if english else "已售出", "ok")
-    _sync_sold_to_shopify(sku, english=english)
+    _sync_sold_to_shopify(
+        sku, english=english, was_linked=item.get("shopify_sku_exist") is True
+    )
     return redirect(success_url)
 
 
-def _sync_sold_to_shopify(sku, *, english=False):
+def _sync_sold_to_shopify(sku, *, english=False, was_linked=False):
     """Set the sold SKU's Shopify inventory to 0 (Admin/Management sales only).
 
     Staff works on the items_view copy, so its sales must not touch the live store.
@@ -242,7 +244,7 @@ def _sync_sold_to_shopify(sku, *, english=False):
     if session.get("role") == ROLE_STAFF:
         return None
     result = zero_shopify_inventory_for_sku(sku)
-    message = sold_sync_flash(result, english=english)
+    message = sold_sync_flash(result, english=english, was_linked=was_linked)
     if message:
         flash(*message)
     return result

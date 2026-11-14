@@ -253,14 +253,32 @@ def _zero_variant(lookup, label: str, provider: ShopifyTokenProvider) -> Dict[st
     return _result(STATUS_ERROR, "Shopify inventory changed repeatedly; please retry.")
 
 
-def sold_sync_flash(result: Dict[str, Any], *, english: bool = False):
-    """Return (message, category) for flashing after a sale, or None."""
+def sold_sync_flash(
+    result: Dict[str, Any], *, english: bool = False, was_linked: bool = False
+):
+    """Return (message, category) for flashing after a sale, or None.
+
+    ``was_linked``: the item was connected to Shopify before the sale. If its
+    SKU can no longer be found, the SKU was most likely changed in Shopify and
+    the old product may still be on sale, so warn instead of staying silent.
+    """
     status = result.get("status")
     detail = result.get("message") or ""
     if status == STATUS_ZEROED:
         return (
             ("Shopify inventory set to 0." if english else "已同步：Shopify 库存已改为 0。"),
             "ok",
+        )
+    if status == STATUS_NOT_FOUND and was_linked:
+        return (
+            (
+                "Sold, but this item was linked to Shopify and its SKU can no longer "
+                "be found there (the SKU may have been changed in Shopify). Please "
+                "check Shopify and take the product off sale manually."
+            ) if english else
+            "已售出，但该商品之前已连接 Shopify，现在按 SKU 在 Shopify 找不到（SKU 可能在 Shopify 被改过），"
+            "库存未能自动改为 0，请到 Shopify 检查并手动下架。",
+            "error",
         )
     if status in (STATUS_ALREADY_ZERO, STATUS_NOT_FOUND):
         return None

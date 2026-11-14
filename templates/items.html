@@ -27,7 +27,27 @@
   /* SOLD but profit not updated: highlight row */
   tr.profit-missing td { background: #ffeef0 !important; }
   .profit-warning { color: #b00020; font-weight: 700; }
+  .sync-status { margin: 6px 0 12px; padding: 8px 12px; border-radius: 6px; background: #eefbf3; color: #166534; border: 1px solid #bbe5c8; }
+  .sync-status.bad { background: #ffeef0; color: #b00020; border-color: #f5c2c7; font-weight: 700; }
 </style>
+
+{% if shopify_sync %}
+  {% if not shopify_sync.enabled %}
+    <div class="sync-status bad">Shopify 同步未启用或未配置。</div>
+  {% else %}
+    <div class="sync-status {{ 'bad' if (shopify_sync.stale or not shopify_sync.ok) }}">
+      Shopify 同步（每{{ shopify_sync.interval_label }}小时自动）：
+      {% if shopify_sync.last_at %}
+        上次 {{ shopify_sync.last_at|dt8 }}{{ "（成功）" if shopify_sync.ok else "（失败）" }}
+      {% else %}
+        尚未完成过同步
+      {% endif %}
+      {% if shopify_sync.running %} · 正在同步…{% endif %}
+      {% if shopify_sync.stale and shopify_sync.last_at %} · ⚠️ 已超过{{ shopify_sync.stale_hours }}小时没有完成同步，请检查服务是否在运行{% endif %}
+      {% if not shopify_sync.ok %} · ⚠️ 上次同步失败，请查看服务日志{% endif %}
+    </div>
+  {% endif %}
+{% endif %}
 
 <form method="get" action="{{ url_for('list_items') }}">
   <input type="hidden" name="page" value="1">
