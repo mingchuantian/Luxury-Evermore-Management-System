@@ -9,7 +9,9 @@ excluded. By default, a complete synchronization runs every hour.
 
 1. Create the app under the same Shopify organization that owns the store.
 2. Configure at least `read_products` or `write_products`, plus `write_files`
-   for the bulk Content image uploader. Shopify treats
+   for the bulk Content image uploader, plus `read_inventory` and
+   `write_inventory` so that marking an item SOLD in this system sets its
+   Shopify "available" inventory to 0 at every location. Shopify treats
    `write_products` as implicitly granting product read access and may omit the
    redundant `read_products` entry from the issued token's scope list.
 3. Release the app configuration and install the app on the store.
@@ -87,3 +89,17 @@ unstable API in production.
 
 `SHOPIFY_ADMIN_ACCESS_TOKEN` remains supported only as a temporary fallback for
 older deployments. New deployments should use Client ID and Client secret.
+
+## Inventory set to 0 on sale
+
+When Admin or Management marks an item SOLD (sale form or quick sale), the app
+looks up the SKU in Shopify and calls `inventorySetQuantities` to set the
+`available` quantity to 0 at every location that still has stock. It uses
+compare-and-swap (`changeFromQuantity`) and the required `@idempotent`
+directive (API 2026-04+). Staff sales (the `items_view` copy) never touch
+Shopify.
+
+A Shopify failure never undoes the sale. The user sees a red message asking
+them to set the inventory to 0 in Shopify manually. Products whose inventory
+is not tracked in Shopify cannot be zeroed and are reported the same way.
+Returning a sold item to stock does not restore Shopify inventory.

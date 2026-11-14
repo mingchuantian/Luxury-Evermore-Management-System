@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block content %}
+{# ONE-TIME TOOL page. Remove together with routes/shopify_zero_sold_once.py. #}
+{% if job.status == "running" %}<script>setTimeout(() => location.reload(), 5000);</script>{% endif %}
+<h2>一次性同步：系统已售 → Shopify 库存改为 0</h2>
+<p class="muted">
+  只处理“系统里已售出、但 Shopify 仍有库存（或未开启库存追踪）”的商品。
+  只读取本系统数据，不修改本系统数据库里的商品。
+</p>
+
+<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+  <form method="post" action="{{ url_for('shopify_zero_sold_start') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="dry_run" value="1">
+    <button class="btn" type="submit" {% if job.status == "running" %}disabled{% endif %}>预览（不改动 Shopify）</button>
+  </form>
+  <form method="post" action="{{ url_for('shopify_zero_sold_start') }}"
+        onsubmit="return confirm('将把 Shopify 中所有“系统已售但仍有库存”的商品库存改为 0。确定执行？');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn" type="submit" {% if job.status == "running" %}disabled{% endif %}>一键同步（改为 0）</button>
+  </form>
+  <a class="btn" href="{{ url_for('index') }}" style="text-decoration:none; display:inline-block;">返回首页</a>
+</div>
+
+{% if not job %}
+  <p class="muted">尚未运行。建议先点“预览”查看清单。</p>
+{% else %}
+  <p>
+    <b>{{ "预览" if job.dry_run else "同步" }}</b> ·
+    状态：<b>{% if job.status == "running" %}运行中（每 5 秒自动刷新）{% elif job.status == "done" %}完成{% else %}失败{% endif %}</b> ·
+    开始：{{ job.started_at|dt8 }}{% if job.finished_at %} · 结束：{{ job.finished_at|dt8 }}{% endif %} ·
+    操作人：{{ job.started_by }}
+  </p>
+  <p>系统已售商品：{{ job.sold_count or 0 }} · 需处理：<b>{{ job.candidate_count or 0 }}</b> · 已处理：{{ job.processed or 0 }}</p>
+  {% if job.error %}<p style="color:#b00020;">错误：{{ job.error }}</p>{% endif %}
+
+  {% if rows %}
+    <table>
+      <tr>
+        <th>SKU</th><th>系统商品名</th><th>Shopify 标题</th><th>Shopify 状态</th>
+        <th>原库存</th><th>结果</th><th>前台链接</th><th>后台链接</th>
+      </tr>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.sku }}</td>
+          <td>{{ row.name }}{% if not row.has_sale_record %}<div class="muted" style="color:#b00020;">系统无售出记录，请核实</div>{% endif %}</td>
+          <td>{{ row.shopify_title }}</td>
+          <td>{{ row.product_status }}</td>
+          <td>{{ row.inventory_before if row.tracked else "不追踪" }}</td>
+          <td>{{ RESULT_LABELS.get(row.result, row.result) }}{% if row.message and row.result not in ("zeroed", "would_zero") %}<div class="muted">{{ row.message }}</div>{% endif %}</td>
+          <td>{% if row.storefront_url %}<a href="{{ row.storefront_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
+          <td>{% if row.admin_url %}<a href="{{ row.admin_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </table>
+
+    <h3>链接清单（可直接复制）</h3>
+    <textarea rows="12" style="width:100%; font-family:monospace;" readonly>SKU	结果	前台链接	后台链接
+{% for row in rows %}{{ row.sku }}	{{ RESULT_LABELS.get(row.result, row.result) }}	{{ row.storefront_url }}	{{ row.admin_url }}
+{% endfor %}</textarea>
+  {% elif job.status == "done" %}
+    <p>没有需要处理的商品：Shopify 上所有系统已售商品库存都已经是 0。</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -37,6 +37,7 @@ from consignment_receipt_template.consignment_settlement_generation import (
     generate_consignment_settlement_docx_bytes,
 )
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
+from .sales import _sync_sold_to_shopify
 
 
 def register(app, items, audit_logs=None):
@@ -477,6 +478,11 @@ def register(app, items, audit_logs=None):
         if status not in STATUS:
             flash("无效状态", "error")
             return redirect(url_for("item_detail", item_key=item_id))
+        if status == "SOLD" and it.get("status") != "SOLD":
+            # Selling must go through the sale form so a sold_record (price,
+            # buyer, receipt) is created and Shopify inventory is set to 0.
+            flash("不能在编辑页直接改为“已售出”，请使用“售出”按钮登记售出信息", "error")
+            return redirect(url_for("item_detail", item_key=item_id))
 
         # Build $set only from fields that are actually present on the page.
         # This prevents "hidden defaults" from being written when the UI doesn't show the field.
@@ -718,6 +724,7 @@ def register(app, items, audit_logs=None):
 
         push_item_audits(items, ObjectId(item_id), entries)
         insert_audit_logs(audit_logs, entries)
+        _sync_sold_to_shopify(sku)
         return "", 204
 
     # ---------------- 到达/回滚工作流 ----------------

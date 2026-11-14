@@ -7,7 +7,7 @@ from pymongo import DESCENDING
 
 from models import now
 
-from ..auth import ROLE_MANAGEMENT, require_roles
+from ..auth import ROLE_MANAGEMENT, ROLE_STAFF, require_roles
 from ..audit import insert_audit_logs, make_change_detail, make_change_status, push_item_audits
 from ..constants import (
     MANAGEMENT_SELLABLE_STATUSES,
@@ -15,6 +15,7 @@ from ..constants import (
     OWNERSHIP_MANAGEMENT,
     SELLABLE_STATUSES,
 )
+from ..shopify_inventory import sold_sync_flash, zero_shopify_inventory_for_sku
 from ..utils import money_int, parse_datetime_local_to_utc
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from consignment_receipt_template.consignment_settlement_generation import (
@@ -228,7 +229,23 @@ def _process_sale(
     push_item_audits(items, oid, entries)
     insert_audit_logs(audit_logs, entries)
     flash("Marked as sold" if english else "已售出", "ok")
+    _sync_sold_to_shopify(sku, english=english)
     return redirect(success_url)
+
+
+def _sync_sold_to_shopify(sku, *, english=False):
+    """Set the sold SKU's Shopify inventory to 0 (Admin/Management sales only).
+
+    Staff works on the items_view copy, so its sales must not touch the live store.
+    A Shopify failure never undoes the sale; it is reported with a flash message.
+    """
+    if session.get("role") == ROLE_STAFF:
+        return None
+    result = zero_shopify_inventory_for_sku(sku)
+    message = sold_sync_flash(result, english=english)
+    if message:
+        flash(*message)
+    return result
 
 
 def register(app, items, audit_logs=None):

@@ -206,7 +206,8 @@
       <div>
         <label>状态</label>
         <select name="status">
-          {% for s in STATUS %}
+          {# “已售出”只能通过售出按钮登记，编辑页不提供 #}
+          {% for s in STATUS if s != "SOLD" %}
             <option value="{{ s }}" {% if item.status==s %}selected{% endif %}>{{ STATUS_ZH.get(s, s) }}</option>
           {% endfor %}
         </select>

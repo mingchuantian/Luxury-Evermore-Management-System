@@ -134,6 +134,10 @@ def register(
             query.update(extra)
         return query
 
+    def _management_read_only(item):
+        """Sold items are view-only for Management (no edit, no delete)."""
+        return session.get("role") == ROLE_MANAGEMENT and item.get("status") == "SOLD"
+
     def _attach_sold_view_fields(doc):
         sold_records = doc.get("sold_record") or []
         doc["_sold"] = sold_records[-1] if sold_records else {}
@@ -722,6 +726,7 @@ def register(
             "management/item_detail.html",
             item=item,
             BRAND_OPTIONS=BRAND_OPTIONS,
+            read_only=_management_read_only(item),
         )
 
     @app.post("/management/items/<item_id>/update")
@@ -733,6 +738,9 @@ def register(
         item = items.find_one(_management_owned_filter({"_id": oid}))
         if not item:
             return "Not found", 404
+        if _management_read_only(item):
+            flash("This item has been sold and is read-only.", "error")
+            return redirect(url_for("management_item_detail", item_key=item_id))
 
         form = request.form
         purchase_at = None
@@ -872,6 +880,8 @@ def register(
         item = items.find_one(scope)
         if not item:
             return "Not found", 404
+        if _management_read_only(item):
+            return "This item has been sold and cannot be deleted.", 403
         if audit_logs is not None and item.get("sku"):
             insert_audit_logs(audit_logs, [make_change_detail(
                 sku=item.get("sku"),

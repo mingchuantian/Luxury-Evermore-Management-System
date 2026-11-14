@@ -10,6 +10,7 @@ from .notes import register as register_notes
 from .qr_check import register as register_qr_check
 from .shopify_files import register as register_shopify_files
 from .inventory_check import register as register_inventory_check
+from .shopify_zero_sold_once import register as register_shopify_zero_sold_once  # ONE-TIME
 
 
 def register_all(
@@ -52,5 +53,12 @@ def register_all(
     register_shopify_files(app)
     if inventory_check_sessions is not None:
         register_inventory_check(app, items, inventory_check_sessions)
+    if background_jobs is not None:
+        # ONE-TIME: zero Shopify inventory for items already SOLD. Remove after use.
+        register_shopify_zero_sold_once(
+            app,
+            management_items if management_items is not None else items,
+            background_jobs,
+        )
 
 

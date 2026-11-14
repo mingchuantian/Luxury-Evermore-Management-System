@@ -28,10 +28,15 @@
   {% elif item.source_type == "CONSIGNMENT" %}
     <a class="btn" href="{{ url_for('management_item_consignment_agreement', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Generate Consignment Agreement</a>
   {% endif %}
+  {% if not read_only %}
   <button class="btn" type="button" onclick='deleteManagementItem({{ (item._id|string)|tojson }}, {{ item.name|tojson }})'>Delete</button>
+  {% endif %}
 </div>
 
 <hr>
+{% if read_only %}
+<p class="muted">This item has been sold and is now read-only. Contact Admin if any information needs to be corrected.</p>
+{% else %}
 <h3>Update Information</h3>
 <form class="plain-form" method="post" action="{{ url_for('management_item_update', item_id=item._id|string) }}">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -104,6 +109,7 @@
   <label>Additional Notes (for agreements)</label><textarea name="additional_notes_for_agreements" rows="4">{{ item.additional_notes_for_agreements or '' }}</textarea>
   <p><button class="btn" type="submit">Save</button></p>
 </form>
+{% endif %}
 
 <script>
   function deleteManagementItem(itemId, name) {
@@ -121,6 +127,7 @@
     }).catch(error => alert(`Network error: ${error}`));
   }
 
+  {% if not read_only %}
   const brandSelect = document.getElementById("brand_select");
   const brandCustomWrap = document.getElementById("brand_custom_wrap");
   document.getElementById("edit_tz_offset_min").value = String((new Date()).getTimezoneOffset());
@@ -135,5 +142,6 @@
   }
   brandSelect.addEventListener("change", refreshCustomBrand);
   refreshCustomBrand();
+  {% endif %}
 </script>
 {% endblock %}
