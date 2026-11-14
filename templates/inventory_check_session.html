@@ -13,6 +13,12 @@
   .stocktake-feedback.success { background:#d9f4e1; border-color:#4e9c64; }
   .stocktake-feedback.duplicate { background:#fff2cc; border-color:#c99a2e; }
   .stocktake-feedback.error { background:#f7dfdf; border-color:#c66d6d; }
+  /* 店内陈列：扫到但未上 website —— 要足够醒目 */
+  .stocktake-feedback.warning { background:#ffe1e1; border:4px solid #b00020; color:#b00020; animation: stocktake-pulse .5s ease-in-out 3; }
+  @keyframes stocktake-pulse { 50% { transform: scale(1.03); } }
+  .not-on-website { color:#b00020; font-weight:700; }
+  .on-website { color:#28623b; }
+  .check-type-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:13px; font-weight:700; background:#eef2f5; }
   .stocktake-feedback-title { font-size:22px; font-weight:700; }
   .stocktake-sku { font-size:20px; font-weight:700; letter-spacing:.06em; }
   .stocktake-manual { display:flex; gap:8px; margin:12px 0; }
@@ -33,7 +39,7 @@
 <div class="stocktake-page">
   <div class="stocktake-top">
     <div>
-      <h2>{{ "正在盘查库存" if active else "盘查结果" }}</h2>
+      <h2>{{ "正在盘查库存" if active else "盘查结果" }} <span class="check-type-badge">{{ check_type_label(check_session) }}</span></h2>
       <div class="muted">开始：{{ check_session.started_at|dt8 }} ｜ 操作人：{{ check_session.started_by.username or "-" }}</div>
       {% if not active %}<div class="muted">结束：{{ check_session.completed_at|dt8 }}</div>{% endif %}
     </div>
@@ -42,6 +48,7 @@
 
   {% if active %}
     <p class="muted">摄像头会持续识别；每个 SKU 在本次 Session 中只记录一次。识别成功后会发出提示音并震动，可立即扫描下一个。</p>
+    {% if is_store %}<p class="muted">店内陈列盘查：已在 Shopify 上的商品显示绿色；<span class="not-on-website">未上 website 的商品会红框提醒</span>，并在结果中列出。</p>{% endif %}
     <div class="stocktake-camera"><div id="stocktake-reader"></div></div>
     <div class="stocktake-controls">
       <button class="btn" id="start-camera" type="button">开启后置摄像头</button>
@@ -63,16 +70,52 @@
     </div>
     <ul class="scan-list" id="scan-list">
       {% for scan in (check_session.scans or [])|reverse %}
-        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span></li>
+        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span>{% if is_store %} · {% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}{% endif %}</li>
       {% else %}
         <li class="muted" id="empty-scan-row">尚无扫描记录</li>
       {% endfor %}
     </ul>
 
-    <form method="post" action="{{ url_for('inventory_check_complete', session_id=check_session._id|string) }}" onsubmit="return confirm('确认结束本次盘查并生成未扫描清单？结束后不能继续扫描。');">
+    <form method="post" action="{{ url_for('inventory_check_complete', session_id=check_session._id|string) }}" onsubmit="return confirm('确认结束本次盘查？结束后不能继续扫描。');">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button class="btn" type="submit">结束盘查并生成结果</button>
     </form>
+  {% elif check_session.check_type %}
+    <div class="item-summary">
+      <p>本次共扫描：<strong>{{ check_session.scanned_skus|length }}</strong> 件</p>
+      {% if is_store %}<p class="missing-count">其中未上 website：<strong class="not-on-website">{{ not_on_website|length }}</strong> 件</p>{% endif %}
+    </div>
+
+    {% if is_store %}
+      <h3>店内陈列但未上 website 的商品</h3>
+      <p class="muted">按系统当前数据实时计算（Shopify 每小时同步一次）：挂网后，下次同步完成时就会从这里消失。</p>
+      {% if not_on_website %}
+      <table>
+        <thead><tr><th>SKU</th><th>商品名称</th><th>品牌</th><th>包身编码</th><th>当前状态</th></tr></thead>
+        <tbody>
+          {% for item in not_on_website %}
+          <tr><td><b><a href="{{ url_for('item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.sku }}</a></b></td><td>{{ item.name or "-" }}</td><td>{{ item.brand or "-" }}</td><td>{{ item.serial_code or "-" }}</td><td>{{ item.status }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <div class="msg ok">店内扫到的商品都已经在 Shopify 上。</div>
+      {% endif %}
+    {% endif %}
+
+    <p class="muted">要找出可能丢失的包，请回到 <a href="{{ url_for('inventory_check_history') }}">盘查库存</a>，选择一次店内陈列盘查和一次老板间盘查做对比。</p>
+
+    <h3>本次全部扫描记录</h3>
+    <table>
+      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th>{% if is_store %}<th>Shopify</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for scan in (check_session.scans or [])|reverse %}
+        <tr><td>{{ scan.scanned_at|dt8 }}</td><td><b>{{ scan.sku }}</b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td>{% if is_store %}<td>{% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}</td>{% endif %}</tr>
+        {% else %}
+        <tr><td colspan="5">没有扫描记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% else %}
     <div class="item-summary">
       <p>本次共扫描：<strong>{{ check_session.scanned_skus|length }}</strong> 件</p>
@@ -114,6 +157,7 @@
 <script>
 (() => {
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const isStoreCheck = {{ is_store|tojson }};
   const scanUrl = {{ url_for('inventory_check_scan', session_id=check_session._id|string)|tojson }};
   const feedback = document.getElementById("stocktake-feedback");
   const scanList = document.getElementById("scan-list");
@@ -180,11 +224,14 @@
     feedback.innerHTML = `<div class="stocktake-feedback-title">${escapeHtml(title)}</div>${sku ? `<div class="stocktake-sku">${escapeHtml(sku)}</div>` : ""}${detail ? `<div>${escapeHtml(detail)}</div>` : ""}`;
   }
 
-  function addScan(scan, count) {
+  function addScan(scan, count, shopifyLinked) {
     document.getElementById("empty-scan-row")?.remove();
     const row = document.createElement("li");
     row.dataset.sku = scan.sku;
-    row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>`;
+    const website = !isStoreCheck ? "" : (shopifyLinked
+      ? ` · <span class="on-website">已在 Shopify</span>`
+      : ` · <span class="not-on-website">未上website</span>`);
+    row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>${website}`;
     scanList.prepend(row);
     scanCount.textContent = `${count} 件`;
   }
@@ -219,13 +266,19 @@
         show("duplicate", "已扫描过，本次不重复记录", sku, "请继续扫描下一件商品。");
       } else {
         seen.add(sku);
-        addScan(result.scan, result.scan_count);
+        addScan(result.scan, result.scan_count, result.shopify_linked);
         const detail = result.scan.status === "RECEIVED"
           ? (result.scan.name || "已到店商品")
           : `${result.scan.name || "商品"}（当前状态：${result.scan.status}）`;
-        show("success", "✓ 扫描成功", sku, detail);
-        beep();
-        if (navigator.vibrate) navigator.vibrate(80);
+        if (isStoreCheck && !result.shopify_linked) {
+          show("warning", "⚠️ 该商品未上website", sku, `${detail} · 已记录，结束后会列在结果里`);
+          beep(); setTimeout(beep, 180); setTimeout(beep, 360);
+          if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
+        } else {
+          show("success", isStoreCheck ? "✓ 扫描成功 · 已在 Shopify 上" : "✓ 扫描成功", sku, detail);
+          beep();
+          if (navigator.vibrate) navigator.vibrate(80);
+        }
       }
     } catch (error) {
       show("error", "记录失败", sku, error.message || "请重试");

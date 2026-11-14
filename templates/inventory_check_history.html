@@ -7,6 +7,12 @@
   .check-active { color:#8a6100; font-weight:700; }
   .check-complete { color:#28623b; font-weight:700; }
   .check-pages { margin-top:14px; display:flex; gap:12px; align-items:center; }
+  .check-start { display:flex; gap:8px; flex-wrap:wrap; }
+  .check-type-store { color:#1d4ed8; font-weight:700; }
+  .check-type-room { color:#7e22ce; font-weight:700; }
+  .check-compare { margin:18px 0; padding:14px; background:#fff; border:1px solid var(--border); border-radius:8px; }
+  .check-compare .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .check-compare select { min-width:240px; }
   @media (max-width:720px) {
     .check-heading { align-items:flex-start; flex-direction:column; }
     .check-heading form, .check-heading button { width:100%; }
@@ -16,12 +22,53 @@
 <div class="check-heading">
   <div>
     <h2>盘查库存</h2>
-    <p class="muted">每次新建一个盘查 Session，连续扫描全店商品；结束后系统会列出未扫描到的“已到店”商品。</p>
+    <p class="muted">
+      店内陈列和老板间分别盘查。店内陈列盘查会提示哪些商品还没上 website；
+      再选一次店内陈列盘查和一次老板间盘查做对比，就能找出系统里在库、但两处都没扫到的商品。
+    </p>
   </div>
-  <form method="post" action="{{ url_for('inventory_check_start') }}">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button class="btn" type="submit">开始新盘查</button>
-  </form>
+  <div class="check-start">
+    <form method="post" action="{{ url_for('inventory_check_start') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="check_type" value="store">
+      <button class="btn" type="submit">开始店内陈列盘查</button>
+    </form>
+    <form method="post" action="{{ url_for('inventory_check_start') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="check_type" value="room">
+      <button class="btn" type="submit">开始老板间盘查</button>
+    </form>
+  </div>
+</div>
+
+<div class="check-compare">
+  <h3 style="margin-top:0;">找出可能丢失的包</h3>
+  {% if store_checks and room_checks %}
+    <form method="get" action="{{ url_for('inventory_check_compare') }}">
+      <div class="row">
+        <div>
+          <label>店内陈列盘查</label>
+          <select name="store">
+            {% for c in store_checks %}
+              <option value="{{ c._id }}">{{ c.started_at|dt8 }}（扫描 {{ (c.scanned_skus or [])|length }} 件）</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>老板间盘查</label>
+          <select name="room">
+            {% for c in room_checks %}
+              <option value="{{ c._id }}">{{ c.started_at|dt8 }}（扫描 {{ (c.scanned_skus or [])|length }} 件）</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div><button class="btn" type="submit">对比</button></div>
+      </div>
+    </form>
+    <p class="muted" style="margin-bottom:0;">默认选中各自最近一次已完成的盘查。结果按系统当前数据实时计算，不保存。</p>
+  {% else %}
+    <p class="muted" style="margin-bottom:0;">需要至少各完成一次“店内陈列盘查”和“老板间盘查”才能对比。</p>
+  {% endif %}
 </div>
 
 <h3>盘查历史</h3>
@@ -29,6 +76,7 @@
 <table>
   <thead>
     <tr>
+      <th>类型</th>
       <th>开始时间</th>
       <th>结束时间</th>
       <th>操作人</th>
@@ -41,11 +89,12 @@
   <tbody>
     {% for check in inventory_sessions %}
     <tr>
+      <td class="check-type-{{ check.check_type or 'legacy' }}">{{ check_type_label(check) }}</td>
       <td>{{ check.started_at|dt8 }}</td>
       <td>{{ check.completed_at|dt8 if check.completed_at else "-" }}</td>
       <td>{{ check.started_by.username or "-" }}</td>
       <td>{{ check.scanned_skus|length }}</td>
-      <td>{{ check.missing_count if check.status == "completed" else "-" }}</td>
+      <td>{{ check.missing_count if (check.status == "completed" and not check.check_type) else "-" }}</td>
       <td>
         {% if check.status == "completed" %}
           <span class="check-complete">已完成</span>

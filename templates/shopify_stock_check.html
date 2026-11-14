@@ -29,7 +29,7 @@
   "sold": "有同款 → 通过后台链接把当前商品改为 Draft，再 Duplicate 并填写新 SKU；没有同款 → 点“已无同款，商品设置库存为0”",
   "missing": "大概率是 Shopify 上的 SKU 填错了 → 通过后台链接改为正确的 SKU",
   "unsellable": "通过后台链接把库存改回 1 / 改为 Active；如果实物已不在售，请在系统中更新状态",
-  "notfound": "SKU 可能在 Shopify 被改过或商品被删除 → 在 Shopify 中把 SKU 改回系统的 SKU；如果实物已不在售，请在系统中更新状态",
+  "notfound": "SKU 可能在 Shopify 被改过或商品被删除 → 在 Shopify 中把 SKU 改回系统的 SKU；如果这件不再挂网，点“改回为 已到货”",
 } %}
 {% set SHORT = {"sold": "系统内已售出", "missing": "系统中无此SKU", "unsellable": "Shopify上买不了", "notfound": "Shopify上找不到"} %}
 
@@ -113,7 +113,12 @@
           {% elif row.reason == "unsellable" %}
             <span class="muted">请在后台改库存 / 状态</span>
           {% else %}
-            <span class="muted">请在 Shopify 检查 SKU，或在系统中更新状态</span>
+            <form method="post" action="{{ url_for('shopify_stock_mark_received') }}"
+                  onsubmit="return confirm('将该商品在系统中改回为“已到货”？');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="sku" value="{{ row.sku }}">
+              <button class="btn" type="submit">改回为 已到货</button>
+            </form>
           {% endif %}
         </td>
       </tr>

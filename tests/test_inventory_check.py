@@ -33,12 +33,15 @@ class InventoryCheckTests(unittest.TestCase):
 
         with app.test_client() as client:
             self._login(client)
-            response = client.post("/inventory-check/sessions")
+            response = client.post(
+                "/inventory-check/sessions", data={"check_type": "store"}
+            )
 
         self.assertEqual(response.status_code, 302)
         self.assertIn(str(oid), response.headers["Location"])
         document = sessions.insert_one.call_args.args[0]
         self.assertEqual(document["status"], "active")
+        self.assertEqual(document["check_type"], "store")
         self.assertEqual(document["scanned_skus"], [])
         self.assertEqual(document["started_by"]["username"], "tester")
 

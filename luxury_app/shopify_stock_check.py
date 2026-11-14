@@ -285,6 +285,15 @@ def remove_row(variant_id: str) -> None:
         _state["rows"] = [r for r in _state["rows"] if r.get("variant_id") != variant_id]
 
 
+def remove_notfound_row(sku: str) -> None:
+    """Hide a “Shopify 上找不到此SKU” row once the item is back to RECEIVED."""
+    with _state_lock:
+        _state["rows"] = [
+            r for r in _state["rows"]
+            if not (r.get("reason") == "notfound" and r.get("sku") == sku)
+        ]
+
+
 def start_scheduler(items):
     """Compute at startup, then every interval, in this process's memory."""
     global _scheduler_thread

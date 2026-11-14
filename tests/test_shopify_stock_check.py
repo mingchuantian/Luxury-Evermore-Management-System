@@ -262,7 +262,8 @@ class RouteTests(unittest.TestCase):
         def index():
             return render_template("layout.html")
 
-        register(app, ReadOnlyInventory([]))
+        register(app, getattr(self, "items", None) or ReadOnlyInventory([]),
+                 audit_logs=getattr(self, "audit_logs", None))
         return app
 
     @staticmethod
@@ -347,6 +348,75 @@ class RouteTests(unittest.TestCase):
     def test_failed_zero_keeps_row(self):
         self._zero(ROW["variant_id"], status="error")
         self.assertEqual(len(check.snapshot()["rows"]), 4)
+
+
+class FakeAuditLogs:
+    def __init__(self):
+        self.docs = []
+
+    def insert_many(self, docs):
+        self.docs.extend(docs)
+
+
+class ProjectingWritableInventory(FakeInventory):
+    def find(self, query, projection=None):
+        return super().find(query)
+
+
+class MarkReceivedTests(unittest.TestCase):
+    """Only the in-memory list and the item status change; nothing else."""
+
+    _app = RouteTests._app
+    _login = staticmethod(RouteTests._login)
+    _get = RouteTests._get
+    tearDown = RouteTests.tearDown
+
+    def setUp(self):
+        RouteTests.setUp(self)
+        self.items = ProjectingWritableInventory([
+            {"_id": ObjectId(), "sku": "GONE001", "brand": "Hermes", "name": "Kelly",
+             "status": "ON_SHELF", "audit": []},
+            {"_id": ObjectId(), "sku": "ZERO001", "name": "A", "status": "ON_SHELF", "audit": []},
+        ])
+        self.audit_logs = FakeAuditLogs()
+
+    def _post(self, sku):
+        app = self._app()
+        with app.test_client() as client:
+            self._login(client, ROLE_ADMIN)
+            response = client.post("/shopify-stock/mark-received", data={"sku": sku})
+            page = client.get("/shopify-stock").get_data(as_text=True)
+        return response, page
+
+    def test_button_only_on_notfound_rows(self):
+        html = self._get("/shopify-stock").get_data(as_text=True)
+        self.assertEqual(html.count("改回为 已到货</button>"), 1)
+        self.assertIn('name="sku" value="GONE001"', html)
+
+    def test_marks_received_with_audit_and_hides_row(self):
+        response, page = self._post("GONE001")
+        self.assertEqual(response.status_code, 302)
+        doc = next(d for d in self.items.docs if d["sku"] == "GONE001")
+        self.assertEqual(doc["status"], "RECEIVED")
+        self.assertEqual(doc["audit"][-1]["from"], "ON_SHELF")
+        self.assertEqual(doc["audit"][-1]["to"], "RECEIVED")
+        self.assertEqual(self.audit_logs.docs[-1]["sku"], "GONE001")
+        self.assertNotIn(("notfound", "GONE001"),
+                         [(r["reason"], r["sku"]) for r in check.snapshot()["rows"]])
+        self.assertIn("已将「Hermes Kelly」改回为“已到货”", page)
+
+    def test_refused_for_skus_not_in_notfound_list(self):
+        self._post("ZERO001")   # listed, but as “买不了”, not “找不到”
+        self._post("NOPE")
+        self.assertEqual(
+            [d["status"] for d in self.items.docs], ["ON_SHELF", "ON_SHELF"]
+        )
+        self.assertEqual(self.audit_logs.docs, [])
+
+    def test_next_scan_no_longer_lists_received_item(self):
+        self._post("GONE001")
+        rows, _ = _scan([], [dict(d) for d in self.items.docs])
+        self.assertNotIn("GONE001", [r["sku"] for r in rows])
 
 
 if __name__ == "__main__":

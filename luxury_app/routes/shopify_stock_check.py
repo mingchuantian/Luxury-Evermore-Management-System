@@ -2,6 +2,9 @@
 
 from flask import flash, redirect, render_template, request, session, url_for
 
+from models import now
+
+from ..audit import insert_audit_logs, make_change_status, push_item_audits
 from ..auth import ROLE_ADMIN, require_roles
 from ..shopify_inventory import (
     STATUS_ALREADY_ZERO,
@@ -15,12 +18,13 @@ from ..shopify_stock_check import (
     counts,
     interval_hours,
     refresh_in_background,
+    remove_notfound_row,
     remove_row,
     snapshot,
 )
 
 
-def register(app, items):
+def register(app, items, audit_logs=None):
     @app.context_processor
     def inject_shopify_stock_alert():
         # Feeds the red count in the top menu and the dashboard alert box.
@@ -57,6 +61,43 @@ def register(app, items):
             flash("正在重新计算，稍后页面会自动更新。", "ok")
         else:
             flash("正在计算中，请稍候。", "error")
+        return redirect(url_for("shopify_stock_page"))
+
+    @app.post("/shopify-stock/mark-received")
+    @require_roles(ROLE_ADMIN)
+    def shopify_stock_mark_received():
+        """“系统内上架在售，但 Shopify 上找不到此SKU” → set the item back to 已到货.
+
+        The next scan no longer lists it (only ON_SHELF items are checked), and
+        the hourly sync moves it to ON_SHELF again once the SKU is on Shopify.
+        """
+        sku = (request.form.get("sku") or "").strip()
+        rows = snapshot()["rows"]
+        if not sku or not any(
+            r.get("reason") == "notfound" and r.get("sku") == sku for r in rows
+        ):
+            flash("该商品已不在“Shopify 上找不到此SKU”列表中，请刷新后再试。", "error")
+            return redirect(url_for("shopify_stock_page"))
+
+        item = items.find_one({"sku": sku, "status": "ON_SHELF"})
+        if not item:
+            remove_notfound_row(sku)
+            flash(f"{sku} 已不是“上架在售”，无需修改。", "error")
+            return redirect(url_for("shopify_stock_page"))
+
+        entry = make_change_status(sku=sku, from_status="ON_SHELF", to_status="RECEIVED")
+        result = items.update_one(
+            {"_id": item["_id"], "status": "ON_SHELF"},
+            {"$set": {"status": "RECEIVED", "updated_at": now()}},
+        )
+        if getattr(result, "modified_count", 0) != 1:
+            flash(f"{sku} 的状态刚刚被修改过，请刷新后再试。", "error")
+            return redirect(url_for("shopify_stock_page"))
+        push_item_audits(items, item["_id"], [entry])
+        insert_audit_logs(audit_logs, [entry])
+        remove_notfound_row(sku)
+        name = f"{item.get('brand') or ''} {item.get('name') or ''}".strip() or sku
+        flash(f"已将「{name}」改回为“已到货”。", "ok")
         return redirect(url_for("shopify_stock_page"))
 
     @app.post("/shopify-stock/zero")

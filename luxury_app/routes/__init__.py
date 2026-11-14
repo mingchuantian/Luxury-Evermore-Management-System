@@ -55,7 +55,9 @@ def register_all(
         register_inventory_check(app, items, inventory_check_sessions)
     # Shopify库存更新: always the real items collection, never items_view.
     register_shopify_stock_check(
-        app, management_items if management_items is not None else items
+        app,
+        management_items if management_items is not None else items,
+        audit_logs=audit_logs,
     )
 
 

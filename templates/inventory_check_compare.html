@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .compare-sources { display:flex; gap:12px; flex-wrap:wrap; margin:10px 0 16px; }
+  .compare-sources div { padding:10px 14px; background:#fff; border:1px solid var(--border); border-radius:8px; }
+  .lost-count { font-size:20px; color:#b00020; font-weight:700; }
+  tr.lost td { background:#ffeef0; }
+  tr.lost-late td { background:#fff8e1; }
+  .late-note { color:#8a6100; font-size:13px; }
+</style>
+
+<h2>可能丢失的包</h2>
+<p class="muted">
+  系统里状态为“已到货”或“上架在售”的商品，在下面这两次盘查中<b>都没有被扫到</b>。
+  按系统当前数据实时计算，不保存到数据库。
+</p>
+
+<div class="compare-sources">
+  <div>
+    <b>店内陈列盘查</b><br>
+    {{ store.started_at|dt8 }} · 扫描 {{ (store.scanned_skus or [])|length }} 件<br>
+    <a href="{{ url_for('inventory_check_session', session_id=store._id|string) }}">查看</a>
+  </div>
+  <div>
+    <b>老板间盘查</b><br>
+    {{ room.started_at|dt8 }} · 扫描 {{ (room.scanned_skus or [])|length }} 件<br>
+    <a href="{{ url_for('inventory_check_session', session_id=room._id|string) }}">查看</a>
+  </div>
+  <div><a href="{{ url_for('inventory_check_history') }}">← 返回盘查库存，换两次盘查对比</a></div>
+</div>
+
+{% if lost %}
+  <p class="lost-count">{{ lost|length }} 件两处都没扫到</p>
+  <table>
+    <thead><tr><th>SKU</th><th>商品名称</th><th>品牌</th><th>包身编码</th><th>当前状态</th></tr></thead>
+    <tbody>
+      {% for item in lost %}
+      <tr class="{{ 'lost-late' if item.arrived_during_checks else 'lost' }}">
+        <td><b><a href="{{ url_for('item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.sku }}</a></b></td>
+        <td>
+          {{ item.name or "-" }}
+          {% if item.arrived_during_checks %}<div class="late-note">到货时间晚于盘查开始，可能只是盘查时还没到</div>{% endif %}
+        </td>
+        <td>{{ item.brand or "-" }}</td>
+        <td>{{ item.serial_code or "-" }}</td>
+        <td>{{ "已到货" if item.status == "RECEIVED" else "上架在售" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <div class="msg ok">所有“已到货”和“上架在售”的商品都在这两次盘查中扫到了。</div>
+{% endif %}
+
+{% if scanned_in_both %}
+  <h3>两处都扫到的 SKU</h3>
+  <p class="muted">同一件商品不应同时在店内和老板间，可能是扫重了或中途搬动过：{{ scanned_in_both|join("、") }}</p>
+{% endif %}
+{% endblock %}
