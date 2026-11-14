@@ -13,6 +13,7 @@ from .items_view_maintenance import start_items_view_maintenance_scheduler
 from .security import init_csrf
 from .routes import register_all
 from .shopify_maintenance import start_shopify_maintenance_scheduler
+from .shopify_stock_check import start_scheduler as start_shopify_stock_check_scheduler
 
 
 def create_app():
@@ -122,6 +123,15 @@ def create_app():
         # 如果启动失败，记录错误但不影响 Flask 应用启动
         import logging
         logging.getLogger(__name__).error(f"Failed to start Shopify maintenance scheduler: {e}", exc_info=True)
+
+    # Shopify库存更新: every 2 hours, read-only scan; never blocks Flask startup.
+    try:
+        start_shopify_stock_check_scheduler(items, background_jobs)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(
+            f"Failed to start Shopify stock check scheduler: {e}", exc_info=True
+        )
 
     # Daily items_view maintenance is independently isolated from Flask and Shopify.
     try:

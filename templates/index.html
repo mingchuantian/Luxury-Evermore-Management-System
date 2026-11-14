@@ -3,8 +3,12 @@
 <h2>仪表盘</h2>
 {% if session.get("role") == "Admin" %}
   <p><a class="btn" href="{{ url_for('download_database_backup') }}" style="text-decoration:none; display:inline-block;">备份数据库</a></p>
-  {# ONE-TIME: remove after the Shopify backlog is cleaned up #}
-  <p><a class="btn" href="{{ url_for('shopify_zero_sold_status') }}" style="text-decoration:none; display:inline-block;">一次性同步：已售商品 Shopify 库存改为 0</a></p>
+  {% if shopify_stock_alert_count %}
+    <div style="border:2px solid #b00020; background:#ffeef0; color:#b00020; border-radius:6px; padding:10px 14px; margin:10px 0; font-weight:700;">
+      ⚠️ {{ shopify_stock_alert_count }}个商品需要更新shopify sku
+      <a href="/shopify-stock" style="color:#b00020; margin-left:8px;">去处理 →</a>
+    </div>
+  {% endif %}
 {% endif %}
 <ul>
   <li>总商品数：<b>{{ total }}</b></li>

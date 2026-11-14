@@ -49,6 +49,27 @@ query InventoryBySku($q: String!) {
 }
 """
 
+QUERY_INVENTORY_BY_VARIANT = """
+query InventoryByVariant($id: ID!) {
+  productVariant(id: $id) {
+    id
+    sku
+    inventoryItem {
+      id
+      tracked
+      inventoryLevels(first: 50) {
+        edges {
+          node {
+            location { id }
+            quantities(names: ["available"]) { name quantity }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 MUTATION_SET_QUANTITIES = """
 mutation ZeroSoldInventory(
   $input: InventorySetQuantitiesInput!,
@@ -118,6 +139,13 @@ def _nonzero_levels(variant: Dict[str, Any]) -> List[Dict[str, Any]]:
     return levels
 
 
+def _find_variant_by_id(variant_id: str, provider: ShopifyTokenProvider) -> Optional[Dict[str, Any]]:
+    data = shopify_gql(
+        QUERY_INVENTORY_BY_VARIANT, {"id": variant_id}, token_provider=provider
+    )
+    return data.get("productVariant") or None
+
+
 def zero_shopify_inventory_for_sku(
     sku: str,
     token_provider: Optional[ShopifyTokenProvider] = None,
@@ -130,8 +158,30 @@ def zero_shopify_inventory_for_sku(
     clean_sku = (sku or "").strip()
     if not clean_sku:
         return _result(STATUS_NOT_FOUND, "Item has no SKU.")
-
     provider = token_provider or TOKEN_PROVIDER
+    return _zero_variant(
+        lambda: _find_variant(clean_sku, provider), f"SKU={clean_sku}", provider
+    )
+
+
+def zero_shopify_inventory_for_variant(
+    variant_id: str,
+    token_provider: Optional[ShopifyTokenProvider] = None,
+) -> Dict[str, Any]:
+    """Same as zero_shopify_inventory_for_sku, addressed by Shopify variant GID.
+
+    Used where the SKU is empty, unknown to this system, or not unique.
+    """
+    clean_id = (variant_id or "").strip()
+    if not clean_id.startswith("gid://shopify/ProductVariant/"):
+        return _result(STATUS_ERROR, "Invalid Shopify variant id.")
+    provider = token_provider or TOKEN_PROVIDER
+    return _zero_variant(
+        lambda: _find_variant_by_id(clean_id, provider), clean_id, provider
+    )
+
+
+def _zero_variant(lookup, label: str, provider: ShopifyTokenProvider) -> Dict[str, Any]:
     config_error = provider.configuration_error()
     if config_error:
         return _result(STATUS_NOT_CONFIGURED, config_error)
@@ -140,9 +190,9 @@ def zero_shopify_inventory_for_sku(
         # Two attempts: if another sale/edit changed the quantity between our
         # read and write, Shopify answers CHANGE_FROM_QUANTITY_STALE; re-read once.
         for attempt in range(2):
-            variant = _find_variant(clean_sku, provider)
+            variant = lookup()
             if variant is None:
-                return _result(STATUS_NOT_FOUND, "SKU not found in Shopify.")
+                return _result(STATUS_NOT_FOUND, "Variant not found in Shopify.")
             if (variant.get("inventoryItem") or {}).get("tracked") is False:
                 return _result(
                     STATUS_NOT_TRACKED,
@@ -171,8 +221,8 @@ def zero_shopify_inventory_for_sku(
             errors = payload.get("userErrors") or []
             if not errors:
                 logger.info(
-                    "Shopify inventory set to 0 for SKU=%s at %s location(s).",
-                    clean_sku, len(levels),
+                    "Shopify inventory set to 0 for %s at %s location(s).",
+                    label, len(levels),
                 )
                 return _result(
                     STATUS_ZEROED,
@@ -197,7 +247,7 @@ def zero_shopify_inventory_for_sku(
                 "The Shopify app needs the read_inventory and write_inventory "
                 "access scopes."
             )
-        logger.error("Failed to zero Shopify inventory for SKU=%s: %s", clean_sku, text)
+        logger.error("Failed to zero Shopify inventory for %s: %s", label, text)
         return _result(STATUS_ERROR, text[:300])
 
     return _result(STATUS_ERROR, "Shopify inventory changed repeatedly; please retry.")

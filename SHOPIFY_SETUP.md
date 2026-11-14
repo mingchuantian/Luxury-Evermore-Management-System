@@ -103,3 +103,27 @@ A Shopify failure never undoes the sale. The user sees a red message asking
 them to set the inventory to 0 in Shopify manually. Products whose inventory
 is not tracked in Shopify cannot be zeroed and are reported the same way.
 Returning a sold item to stock does not restore Shopify inventory.
+
+## Shopify库存更新 (Admin menu)
+
+Every 2 hours (and on "手动刷新") the app scans all Shopify product variants,
+read-only, and lists those that are **Active** and still sellable (inventory
+above 0, or inventory not tracked) but whose SKU is either SOLD in this system
+or does not exist in this system. Draft and archived products are ignored.
+The dashboard shows a red alert and the menu shows a red count while the list
+is not empty.
+
+Per row, Admin can open the Shopify admin link (draft the product, duplicate
+it and enter the new SKU when a same-style item exists) or click
+"已无同款，商品设置库存为0", which sets that variant's available inventory to 0.
+
+Optional environment variables:
+
+```text
+SHOPIFY_STOCK_CHECK_ENABLED=true
+SHOPIFY_STOCK_CHECK_INTERVAL_HOURS=2
+```
+
+The scan never writes to the items collection. The latest list and the
+schedule are stored on the `shopify_stock_check` document in
+`background_jobs`, so every web worker shows the same page.

@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  th.col-img, td.col-img { padding: 0; width: 52px; }
+  td.col-img { text-align: center; }
+  td.col-img img { display: block; margin: 2px auto; width: 68px; height: 68px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; }
+  /* Same look as “利润未更新” in 库存列表 */
+  tr.stock-mismatch td { background: #ffeef0 !important; }
+  .stock-warning { color: #b00020; font-weight: 700; }
+</style>
+{% if state.running %}<script>setTimeout(() => location.reload(), 5000);</script>{% endif %}
+
+<h2>Shopify库存更新</h2>
+<p class="muted">
+  列出 Shopify 中状态为 Active、仍可购买，但在本系统里已售出或找不到对应 SKU 的商品。
+  有同款：通过后台链接把当前商品改为 Draft，再 Duplicate 并填写新 SKU；没有同款：点“已无同款，商品设置库存为0”。
+</p>
+
+<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+  <form method="post" action="{{ url_for('shopify_stock_refresh') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn" type="submit" {% if state.running %}disabled{% endif %}>{{ "刷新中…" if state.running else "手动刷新" }}</button>
+  </form>
+  <span class="muted">
+    每{{ interval_label }}小时自动更新
+    {% if state.last_success_at %} · 上次更新：{{ state.last_success_at|dt8 }}{% endif %}
+    {% if state.next_run_at %} · 下次自动更新：{{ state.next_run_at|dt8 }}{% endif %}
+  </span>
+</div>
+{% if state.last_error %}
+  <p class="stock-warning">最近一次刷新失败（列表为上次成功结果）：{{ state.last_error }}</p>
+{% endif %}
+
+{% if not state.last_success_at %}
+  <p class="muted">{{ "首次检查进行中…" if state.running else "尚未检查。点“手动刷新”立即检查。" }}</p>
+{% elif not rows %}
+  <p>✅ 没有需要更新的商品。</p>
+{% else %}
+  <p><b>{{ rows|length }}</b> 个商品需要更新 Shopify SKU</p>
+  <table>
+    <tr>
+      <th class="col-img">图片</th><th>SKU</th><th>Shopify 标题</th><th>系统商品</th>
+      <th>前台链接</th><th>后台链接</th><th>操作</th>
+    </tr>
+    {% for row in rows %}
+      <tr class="stock-mismatch">
+        <td class="col-img">
+          {% if row.image %}<img src="{{ row.image|e }}" alt="shopify image" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+        </td>
+        <td class="muted">{{ row.sku or "（无 SKU）" }}</td>
+        <td>
+          {{ row.shopify_title }}
+          <div class="stock-warning">系统内已sold或无此产品，shopify需更新sku或下架</div>
+        </td>
+        <td>
+          {% if row.reason == "sold" %}
+            <a href="{{ url_for('item_detail', item_key=row.sku) }}" target="_blank" rel="noopener noreferrer">{{ row.system_name or row.sku }}</a>
+            <div class="muted">已售出</div>
+          {% else %}
+            <span class="muted">系统中无此 SKU</span>
+          {% endif %}
+        </td>
+        <td>{% if row.storefront_url %}<a href="{{ row.storefront_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
+        <td>{% if row.admin_url %}<a href="{{ row.admin_url }}" target="_blank" rel="noopener noreferrer">打开</a>{% endif %}</td>
+        <td>
+          {% if row.tracked %}
+            <form method="post" action="{{ url_for('shopify_stock_zero') }}"
+                  onsubmit="return confirm('确认已无同款？将把 Shopify 中该商品的库存设置为 0。');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="variant_id" value="{{ row.variant_id }}">
+              <button class="btn" type="submit">已无同款，商品设置库存为0</button>
+            </form>
+          {% else %}
+            <span class="stock-warning">未开启库存追踪，请在后台改为 Draft</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+{% endblock %}

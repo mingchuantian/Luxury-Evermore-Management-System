@@ -306,6 +306,9 @@
         <a href="/qr-check">QR查链接</a>
         <a href="/inventory-check">盘查库存</a>
         <a href="/shopify/files/bulk-upload">批量图传Shopify</a>
+        {% if session.get("role") == "Admin" %}
+          <a href="/shopify-stock">Shopify库存更新{% if shopify_stock_alert_count %} <span style="color:#b00020; font-weight:700;">({{ shopify_stock_alert_count }})</span>{% endif %}</a>
+        {% endif %}
         <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
         <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
         <a href="{{ url_for('analytics') }}">数据分析</a>
