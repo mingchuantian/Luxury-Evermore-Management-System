@@ -1,0 +1,615 @@
+{% extends "layout.html" %}
+{% block content %}
+{% macro money(v) %}{{ "—" if v is none else "{:,.0f}".format(v) }}{% endmacro %}
+{% macro pct(v) %}{{ "—" if v is none else "{:.1f}%".format(v * 100) }}{% endmacro %}
+{% macro days(v) %}{{ "—" if v is none else "{:.0f} 天".format(v) }}{% endmacro %}
+{% macro item_link(sku, text=None) %}<a href="{{ url_for('item_detail', item_key=sku) }}" target="_blank" rel="noopener noreferrer">{{ text or sku }}</a>{% endmacro %}
+{% set CCY = opts.ccy %}
+{% set period_label = {0: "全部时间", 3: "近 3 个月", 6: "近 6 个月", 12: "近 12 个月", 24: "近 24 个月"}[opts.months] %}
+
+<style>
+  .ca-root {
+    --ca-surface: #ffffff; --ca-ink: #0b0b0b; --ca-ink-2: #52514e; --ca-muted: #77756f;
+    --ca-grid: #e1e0d9; --ca-axis: #c3c2b7;
+    --ca-s1: #2a78d6; --ca-s2: #eb6834;
+    --ca-good: #006300; --ca-bad: #b3261e; --ca-warn-bg: #fff8e1; --ca-warn-ink: #7a5200;
+    max-width: 1280px;
+  }
+  .ca-root h2 { margin-bottom: 4px; }
+  .ca-lede { color: var(--ca-ink-2); font-size: 14px; margin: 0 0 14px; max-width: 900px; }
+  .ca-filters { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; padding: 12px 14px;
+    background: var(--ca-surface); border: 1px solid var(--border); border-radius: 8px; }
+  .ca-filters label { display: block; font-size: 12px; color: var(--ca-ink-2); margin-bottom: 3px; }
+  .ca-filters select, .ca-filters input { width: auto; min-width: 96px; }
+  .ca-filters input[type=number] { width: 84px; min-width: 0; }
+  .ca-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+  .ca-toc a { font-size: 13px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 14px;
+    background: var(--ca-surface); text-decoration: none; white-space: nowrap; }
+  .ca-note { margin: 10px 0 0; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+    background: var(--ca-warn-bg); color: var(--ca-warn-ink); border: 1px solid #ecd9a0; }
+  .ca-card { background: var(--ca-surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 18px 20px 20px; margin-top: 18px; scroll-margin-top: 12px; }
+  .ca-card > h3 { margin: 0 0 2px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  .ca-num { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px;
+    padding: 0 6px; box-sizing: border-box; border-radius: 13px; background: var(--primary); color: #fff; font-size: 13px; font-weight: 700; }
+  .ca-how { color: var(--ca-ink-2); font-size: 13px; margin: 0 0 14px; max-width: 920px; }
+  .ca-how b { color: var(--ca-ink); }
+  .ca-sub { font-size: 14px; font-weight: 600; color: var(--ca-ink); margin: 18px 0 2px; }
+  .ca-cap { font-size: 12px; color: var(--ca-muted); margin: 0 0 8px; }
+  .ca-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 0 0 14px; }
+  .ca-tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: #fbfbfa; }
+  .ca-tile .l { font-size: 12px; color: var(--ca-ink-2); }
+  .ca-tile .v { font-size: 24px; font-weight: 600; color: var(--ca-ink); line-height: 1.25; }
+  .ca-tile .v small { font-size: 12px; font-weight: 500; color: var(--ca-muted); margin-left: 3px; }
+  .ca-tile .s { font-size: 12px; color: var(--ca-muted); margin-top: 2px; }
+  .ca-up { color: var(--ca-good); font-weight: 600; } .ca-down { color: var(--ca-bad); font-weight: 600; }
+  .ca-flat { color: var(--ca-ink-2); font-weight: 600; }
+  .ca-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; }
+  .ca-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 24px; }
+  .ca-grid2 > *, .ca-grid3 > * { min-width: 0; }
+  @media (max-width: 1000px) { .ca-grid2, .ca-grid3 { grid-template-columns: 1fr; } }
+  .ca-chart { position: relative; width: 100%; }
+  .ca-empty { padding: 26px 12px; text-align: center; color: var(--ca-muted); font-size: 13px;
+    border: 1px dashed var(--border-strong); border-radius: 8px; background: #fbfbfa; }
+  .ca-root table { margin-top: 6px; }
+  .ca-root th, .ca-root td { font-size: 13px; padding: 6px 8px; }
+  .ca-root td.n, .ca-root th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ca-root details { margin-top: 8px; }
+  .ca-root summary { cursor: pointer; font-size: 12px; color: var(--ca-ink-2); }
+  .ca-scroll { overflow-x: auto; }
+  .ca-pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #eef0f2; color: var(--ca-ink-2); }
+  .ca-q-ok { color: var(--ca-good); font-weight: 600; } .ca-q-bad { color: var(--ca-bad); font-weight: 600; }
+  .ca-meter { height: 6px; border-radius: 3px; background: #dbe8f8; min-width: 80px; }
+  .ca-meter i { display: block; height: 6px; border-radius: 3px; background: var(--ca-s1); }
+</style>
+
+<div class="ca-root">
+  <h2>Claude新增分析</h2>
+  <p class="ca-lede">
+    11 项试运行的分析。全部只读取数据库，不写入任何数据；每次打开页面都按当前数据重新计算。
+    金额统一换算成 {{ CCY }}（汇率在下面可改，只影响本页显示）。
+  </p>
+
+  <form class="ca-filters" method="get" action="{{ url_for('claude_analytics') }}">
+    <div><label for="ca-own">商品归属</label>
+      <select id="ca-own" name="ownership">
+        <option value="admin" {{ "selected" if opts.ownership == "admin" }}>Admin（自己的货）</option>
+        <option value="management" {{ "selected" if opts.ownership == "management" }}>Management</option>
+        <option value="all" {{ "selected" if opts.ownership == "all" }}>全部</option>
+      </select></div>
+    <div><label for="ca-months">时间范围</label>
+      <select id="ca-months" name="months">
+        {% for m, text in [(3, "近 3 个月"), (6, "近 6 个月"), (12, "近 12 个月"), (24, "近 24 个月"), (0, "全部时间")] %}
+          <option value="{{ m }}" {{ "selected" if opts.months == m }}>{{ text }}</option>
+        {% endfor %}
+      </select></div>
+    <div><label for="ca-ccy">显示币种</label>
+      <select id="ca-ccy" name="ccy">
+        <option value="SGD" {{ "selected" if CCY == "SGD" }}>SGD</option>
+        <option value="RMB" {{ "selected" if CCY == "RMB" }}>RMB</option>
+      </select></div>
+    <div><label for="ca-rate1">1 SGD = ? RMB</label>
+      <input id="ca-rate1" type="number" name="sgd_rmb" step="0.01" min="0.1" max="100" value="{{ opts.sgd_rmb }}"></div>
+    <div><label for="ca-rate2">1 USD = ? SGD</label>
+      <input id="ca-rate2" type="number" name="usd_sgd" step="0.01" min="0.1" max="100" value="{{ opts.usd_sgd }}"></div>
+    <div><label for="ca-profit">利润口径</label>
+      <select id="ca-profit" name="profit">
+        <option value="recorded" {{ "selected" if opts.profit_basis == "recorded" }}>手填利润优先，没填的用成交价−成本</option>
+        <option value="computed" {{ "selected" if opts.profit_basis == "computed" }}>全部按 成交价−成本</option>
+      </select></div>
+    <div><button class="btn" type="submit">更新</button></div>
+  </form>
+
+  <div class="ca-toc" role="navigation" aria-label="分析目录">
+    {% for id, text in [("ca-1", "① 库龄和滞销"), ("ca-2", "② 周转天数"), ("ca-3", "③ 利润率和回报"), ("ca-4", "④ 货源排行"),
+                        ("ca-5", "⑤ 成交价对比标价"), ("ca-6", "⑥ 渠道和付款"), ("ca-7", "⑦ 流程耗时"), ("ca-8", "⑧ 月度指标"),
+                        ("ca-9", "⑨ 资金进出"), ("ca-10", "⑩ 寄卖"), ("ca-11", "⑪ 数据质量")] %}
+      <a href="#{{ id }}">{{ text }}</a>
+    {% endfor %}
+  </div>
+
+  <p class="ca-cap" style="margin-top:8px;">
+    当前范围：{{ r.item_count }} 件商品，其中已售 {{ r.sold_count }} 件；{{ period_label }}内售出 {{ r.sold_in_period }} 件。
+    标了“{{ period_label }}”的分析受时间范围影响，其余是当前快照或固定时间段。
+  </p>
+  {% if r.profit_estimated_count or r.profit_missing_count %}
+    <p class="ca-note">
+      {{ period_label }}售出的 {{ r.sold_in_period }} 件里：
+      {% if r.profit_estimated_count %}<b>{{ r.profit_estimated_count }}</b> 件没有手填利润，用“成交价 − 成本”估算；{% endif %}
+      {% if r.profit_missing_count %}<b>{{ r.profit_missing_count }}</b> 件连估算都做不了（缺成交价、成本或币种），没有计入利润。{% endif %}
+      详见 <a href="#ca-11">⑪ 数据质量</a>。
+    </p>
+  {% endif %}
+
+  {# ------------------------------------------------------------ 1 aging #}
+  <section class="ca-card" id="ca-1">
+    <h3><span class="ca-num">1</span>库龄和滞销</h3>
+    <p class="ca-how"><b>怎么看：</b>在库的货从收货那天算起已经放了多久。右边柱子越高，说明压在老货上的钱越多。下面的清单是最该处理的 20 件。当前快照，不受时间范围影响。</p>
+    {% set a = r.aging %}
+    {% if a.stock_count %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">在库件数</div><div class="v">{{ a.stock_count }}<small>件</small></div><div class="s">其中寄卖 {{ a.consignment_count }} 件；另有 {{ a.inbound_count }} 件已录入未到货</div></div>
+      <div class="ca-tile"><div class="l">收货占用资金</div><div class="v">{{ money(a.buy_in_cost) }}<small>{{ CCY }}</small></div><div class="s">{% if a.cost_unknown %}{{ a.cost_unknown }} 件成本或币种未知，未计入{% else %}只算收货，不含寄卖{% endif %}</div></div>
+      <div class="ca-tile"><div class="l">超过 90 天的件数</div><div class="v">{{ a.old_count }}<small>件</small></div><div class="s">占在库的 {{ pct(a.old_share) }}</div></div>
+      <div class="ca-tile"><div class="l">超过 90 天占用资金</div><div class="v">{{ money(a.old_cost) }}<small>{{ CCY }}</small></div><div class="s">占收货占用资金的 {{ pct(a.old_cost_share) }}</div></div>
+      <div class="ca-tile"><div class="l">在库库龄中位数</div><div class="v">{{ days(a.median_age) }}</div><div class="s">一半的货放得比这更久</div></div>
+    </div>
+    <div class="ca-grid2">
+      <div><div class="ca-sub">各库龄段的件数</div><p class="ca-cap">含寄卖</p><div class="ca-chart" style="height:240px;"><canvas id="c-age-n"></canvas></div></div>
+      <div><div class="ca-sub">各库龄段占用的资金（{{ CCY }}）</div><p class="ca-cap">只算收货</p><div class="ca-chart" style="height:240px;"><canvas id="c-age-cost"></canvas></div></div>
+    </div>
+    <div class="ca-sub">放得最久的 20 件</div>
+    <div class="ca-scroll"><table>
+      <tr><th>SKU</th><th>商品</th><th class="n">已在库</th><th>状态</th><th>类型</th><th class="n">成本（{{ CCY }}）</th><th class="n">标价（{{ CCY }}）</th><th>Shopify</th></tr>
+      {% for it in a.oldest %}
+        <tr><td>{{ item_link(it.sku) }}</td><td>{{ it.name }}</td><td class="n">{{ it.days }} 天</td><td>{{ it.status }}</td><td>{{ it.source }}</td>
+            <td class="n">{{ money(it.cost) }}</td><td class="n">{{ money(it.listing) }}</td><td>{{ "已连接" if it.shopify_linked else "未连接" }}</td></tr>
+      {% endfor %}
+    </table></div>
+    {% else %}<div class="ca-empty">目前没有在库商品。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 2 turnover #}
+  <section class="ca-card" id="ca-2">
+    <h3><span class="ca-num">2</span>周转天数 <span class="ca-pill">{{ period_label }}</span></h3>
+    <p class="ca-how"><b>怎么看：</b>一件货从收货到卖出用了多少天。用中位数（排在正中间的那件）而不是平均数，这样不会被个别压了很久的货拉偏。</p>
+    {% set t = r.turnover %}
+    {% if t.n %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">周转天数中位数</div><div class="v">{{ days(t.median) }}</div><div class="s">平均 {{ days(t.avg) }}；共 {{ t.n }} 件</div></div>
+      <div class="ca-tile"><div class="l">30 天内卖出</div><div class="v">{{ pct(t.within_30) }}</div><div class="s">收货后一个月内成交的比例</div></div>
+      <div class="ca-tile"><div class="l">超过 90 天才卖出</div><div class="v">{{ pct(t.over_90) }}</div><div class="s">越低越好</div></div>
+    </div>
+    <div class="ca-grid2">
+      <div><div class="ca-sub">卖出用了多少天（件数分布）</div><p class="ca-cap">&nbsp;</p><div class="ca-chart" style="height:250px;"><canvas id="c-turn-hist"></canvas></div></div>
+      <div><div class="ca-sub">各品牌周转天数中位数</div><p class="ca-cap">售出件数最多的品牌，卖得最快的排在上面</p><div class="ca-chart" id="w-turn-brand"><canvas id="c-turn-brand"></canvas></div></div>
+    </div>
+    <div class="ca-sub">每月售出商品的周转天数中位数</div><p class="ca-cap">往下走说明货卖得越来越快；某个月件数很少时波动会很大</p>
+    <div class="ca-chart" style="height:230px;"><canvas id="c-turn-month"></canvas></div>
+    {% else %}<div class="ca-empty">{{ period_label }}没有可计算周转天数的售出记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 3 returns #}
+  <section class="ca-card" id="ca-3">
+    <h3><span class="ca-num">3</span>利润率和回报 <span class="ca-pill">{{ period_label }}</span></h3>
+    <p class="ca-how"><b>怎么看：</b>利润率 = 利润 ÷ 成本。年化回报 = 利润率 ÷ 平均周转天数 × 365，表示同一笔钱按这个速度滚一年能赚多少，用来比较“赚得多但慢”和“赚得少但快”。</p>
+    {% set o = r.returns.overall %}
+    {% if o.n %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">总利润</div><div class="v">{{ money(o.profit) }}<small>{{ CCY }}</small></div><div class="s">{{ o.profit_n }} / {{ o.n }} 件有利润数字</div></div>
+      <div class="ca-tile"><div class="l">整体利润率</div><div class="v">{{ pct(o.margin) }}</div><div class="s">利润 ÷ 成本</div></div>
+      <div class="ca-tile"><div class="l">包均利润</div><div class="v">{{ money(o.avg_profit) }}<small>{{ CCY }}</small></div><div class="s">销售额 {{ money(o.revenue) }}</div></div>
+      <div class="ca-tile"><div class="l">年化回报</div><div class="v">{{ pct(o.annualized) }}</div><div class="s">平均周转 {{ days(o.avg_days) }}</div></div>
+    </div>
+    <div class="ca-sub">各品牌：赚得多不多 × 卖得快不快</div>
+    <p class="ca-cap">每个圆是一个品牌（至少售出 3 件），圆越大售出件数越多。<b>左上角</b>最好（利润率高、卖得快），右下角最差。</p>
+    <div class="ca-chart" style="height:340px;"><canvas id="c-ret-bubble"></canvas></div>
+    {% macro ret_table(rows, first) %}
+      <div class="ca-scroll"><table>
+        <tr><th>{{ first }}</th><th class="n">售出</th><th class="n">销售额</th><th class="n">成本</th><th class="n">利润</th><th class="n">利润率</th><th class="n">包均利润</th><th class="n">周转中位</th><th class="n">年化回报</th></tr>
+        {% for g in rows %}
+          <tr><td style="white-space:nowrap;">{{ g.label }}</td><td class="n">{{ g.n }}</td><td class="n">{{ money(g.revenue) }}</td><td class="n">{{ money(g.cost) }}</td>
+              <td class="n">{{ money(g.profit) }}</td><td class="n">{{ pct(g.margin) }}</td><td class="n">{{ money(g.avg_profit) }}</td>
+              <td class="n">{{ days(g.median_days) }}</td><td class="n">{{ pct(g.annualized) }}</td></tr>
+        {% endfor %}
+      </table></div>
+    {% endmacro %}
+    <div class="ca-sub">按品牌（利润最高的 15 个，金额单位 {{ CCY }}）</div>{{ ret_table(r.returns.brands, "品牌") }}
+    <div class="ca-grid2">
+      <div><div class="ca-sub">按成本价格带（{{ CCY }}）</div>{{ ret_table(r.returns.bands, "成本") }}</div>
+      <div><div class="ca-sub">收货 对比 寄卖</div>{{ ret_table(r.returns.sources, "类型") }}
+        <p class="ca-cap">寄卖的“成本”是约定付给寄卖人的金额，不占用你的资金，所以它的年化回报只作参考。</p></div>
+    </div>
+    {% else %}<div class="ca-empty">{{ period_label }}没有售出记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 4 sourcing #}
+  <section class="ca-card" id="ca-4">
+    <h3><span class="ca-num">4</span>货源排行 <span class="ca-pill">{{ period_label }}收的货</span></h3>
+    <p class="ca-how"><b>怎么看：</b>按卖家 / 寄卖人汇总：从谁那里收的货最赚钱、卖得最快、出问题最少。名字完全相同才会合并，同一个人写法不同会被算成两个人。</p>
+    {% set s = r.sourcing %}
+    {% if s.rows %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">货源人数</div><div class="v">{{ s.seller_count }}<small>人</small></div><div class="s">其中 {{ s.repeat_sellers }} 人供过 2 件以上</div></div>
+      <div class="ca-tile"><div class="l">收货件数</div><div class="v">{{ s.total }}<small>件</small></div><div class="s">{{ s.unnamed }} 件没填卖家，未计入排行</div></div>
+    </div>
+    <div class="ca-sub">带来利润最多的货源（{{ CCY }}）</div><p class="ca-cap">只算已经卖出的部分</p>
+    <div class="ca-chart" id="w-src"><canvas id="c-src"></canvas></div>
+    <div class="ca-sub">明细（前 20）</div>
+    <div class="ca-scroll"><table>
+      <tr><th>卖家 / 寄卖人</th><th class="n">收货</th><th class="n">已售</th><th class="n">在库</th><th class="n">问题件</th><th class="n">成本合计</th><th class="n">已实现利润</th><th class="n">利润率</th><th class="n">周转中位</th></tr>
+      {% for g in s.rows %}
+        <tr><td>{{ g.label }}{% if g.consignment %} <span class="ca-pill">寄卖 {{ g.consignment }}</span>{% endif %}</td><td class="n">{{ g.n }}</td><td class="n">{{ g.sold }}</td><td class="n">{{ g.in_stock }}</td>
+            <td class="n">{{ g.problems or "" }}</td><td class="n">{{ money(g.cost) }}</td><td class="n">{{ money(g.profit) }}</td><td class="n">{{ pct(g.margin) }}</td><td class="n">{{ days(g.median_days) }}</td></tr>
+      {% endfor %}
+    </table></div>
+    <p class="ca-cap">问题件 = 状态为缺件、到货损坏或已退货。</p>
+    {% else %}<div class="ca-empty">{{ period_label }}收的货里没有填卖家的记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 5 discount #}
+  <section class="ca-card" id="ca-5">
+    <h3><span class="ca-num">5</span>成交价对比标价 <span class="ca-pill">{{ period_label }}</span></h3>
+    <p class="ca-how"><b>怎么看：</b>让价 =（标价 − 成交价）÷ 标价。让价一直很低，可能标价偏低；放得越久让得越多，说明该更早调价。用的是系统里的标价，如果售出后改过标价，这里会不准。</p>
+    {% set d = r.discount %}
+    {% if d.n %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">平均让价</div><div class="v">{{ pct(d.avg) }}</div><div class="s">中位数 {{ pct(d.median) }}；共 {{ d.n }} 件</div></div>
+      <div class="ca-tile"><div class="l">按标价成交</div><div class="v">{{ pct(d.at_list) }}</div><div class="s">一分没让</div></div>
+      <div class="ca-tile"><div class="l">让价超过 10%</div><div class="v">{{ pct(d.over_10) }}</div><div class="s">高于标价成交 {{ pct(d.above_list) }}</div></div>
+    </div>
+    <div class="ca-grid2">
+      <div><div class="ca-sub">放得越久，让得越多吗？（平均让价 %）</div><p class="ca-cap">按售出时已经放了多久分组</p><div class="ca-chart" style="height:250px;"><canvas id="c-disc-age"></canvas></div></div>
+      <div><div class="ca-sub">各品牌平均让价（%）</div><p class="ca-cap">售出件数最多的品牌</p><div class="ca-chart" id="w-disc-brand"><canvas id="c-disc-brand"></canvas></div></div>
+    </div>
+    {% if d.excluded %}<p class="ca-cap">{{ d.excluded }} 件没有标价或成交价（或两者差得离谱），没有计入。</p>{% endif %}
+    {% else %}<div class="ca-empty">{{ period_label }}没有同时带标价和成交价的售出记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 6 channels #}
+  <section class="ca-card" id="ca-6">
+    <h3><span class="ca-num">6</span>销售渠道、付款方式和经手人 <span class="ca-pill">{{ period_label }}</span></h3>
+    <p class="ca-how"><b>怎么看：</b>钱主要从哪个渠道来、客人怎么付款、谁经手成交。渠道是手填的文字，我把常见写法（ig / Instagram、店内 / walk in 等）合并了；“未填”占比高的话这张图参考价值有限。</p>
+    {% set c = r.channels %}
+    {% if c.n %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">填了销售渠道</div><div class="v">{{ pct(c.channel_filled) }}</div><div class="s">共 {{ c.n }} 笔成交</div></div>
+      <div class="ca-tile"><div class="l">填了付款方式</div><div class="v">{{ pct(c.payment_filled) }}</div></div>
+      <div class="ca-tile"><div class="l">记录了经手人</div><div class="v">{{ pct(c.staff_filled) }}</div></div>
+      <div class="ca-tile"><div class="l">填了买家</div><div class="v">{{ pct(c.buyer_filled) }}</div></div>
+    </div>
+    <div class="ca-grid3">
+      <div><div class="ca-sub">各渠道销售额（{{ CCY }}）</div><div class="ca-chart" id="w-ch"><canvas id="c-ch"></canvas></div></div>
+      <div><div class="ca-sub">各付款方式销售额（{{ CCY }}）</div><div class="ca-chart" id="w-pay"><canvas id="c-pay"></canvas></div></div>
+      <div><div class="ca-sub">各经手人销售额（{{ CCY }}）</div><div class="ca-chart" id="w-staff"><canvas id="c-staff"></canvas></div></div>
+    </div>
+    {% macro ch_table(rows, first) %}
+      <div class="ca-scroll"><table>
+        <tr><th>{{ first }}</th><th class="n">笔数</th><th class="n">笔数占比</th><th class="n">销售额</th><th class="n">销售额占比</th><th class="n">平均成交价</th><th class="n">利润</th></tr>
+        {% for g in rows %}<tr><td>{{ g.label }}</td><td class="n">{{ g.n }}</td><td class="n">{{ pct(g.share_n) }}</td><td class="n">{{ money(g.revenue) }}</td><td class="n">{{ pct(g.share_revenue) }}</td><td class="n">{{ money(g.avg_price) }}</td><td class="n">{{ money(g.profit) }}</td></tr>{% endfor %}
+      </table></div>
+    {% endmacro %}
+    <details><summary>查看数据表（金额单位 {{ CCY }}）</summary>
+      <div class="ca-sub">销售渠道</div>{{ ch_table(c.channel, "渠道") }}
+      <div class="ca-sub">付款方式</div>{{ ch_table(c.payment, "付款方式") }}
+      <div class="ca-sub">经手人</div>{{ ch_table(c.staff, "经手人") }}
+    </details>
+    {% else %}<div class="ca-empty">{{ period_label }}没有售出记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 7 flow #}
+  <section class="ca-card" id="ca-7">
+    <h3><span class="ca-num">7</span>流程耗时 <span class="ca-pill">{{ period_label }}</span></h3>
+    <p class="ca-how"><b>怎么看：</b>一件货在每一步停留多久，哪一步的天数最长，货就卡在哪一步。时间来自每件商品的操作记录，所以只统计在系统里改过状态的商品。</p>
+    {% set f = r.flow %}
+    {% if f.steps | sum(attribute="n") %}
+    <div class="ca-grid2">
+      <div><div class="ca-sub">每一步的天数（中位数）</div><p class="ca-cap">&nbsp;</p><div class="ca-chart" id="w-flow"><canvas id="c-flow"></canvas></div></div>
+      <div>
+        <div class="ca-sub">明细</div>
+        <div class="ca-scroll"><table>
+          <tr><th>步骤</th><th class="n">件数</th><th class="n">中位数</th><th class="n">平均</th><th class="n">最慢的 10%</th></tr>
+          {% for st in f.steps %}
+            <tr><td>{{ st.label }}{% if st.note %}<div class="muted">{{ st.note }}</div>{% endif %}</td><td class="n">{{ st.n }}</td>
+                <td class="n">{{ "—" if st.median is none else "{:.1f} 天".format(st.median) }}</td><td class="n">{{ "—" if st.avg is none else "{:.1f} 天".format(st.avg) }}</td>
+                <td class="n">{{ "—" if st.p90 is none else "超过 {:.0f} 天".format(st.p90) }}</td></tr>
+          {% endfor %}
+        </table></div>
+        <p class="ca-cap">{{ period_label }}售出的 {{ f.sold_n }} 件里，有 {{ f.sold_never_listed }} 件从没标记过“上架在售”就卖出了（比如店内直接成交）。</p>
+      </div>
+    </div>
+    {% else %}<div class="ca-empty">{{ period_label }}没有可用的状态变更记录。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 8 KPI #}
+  <section class="ca-card" id="ca-8">
+    <h3><span class="ca-num">8</span>月度指标</h3>
+    <p class="ca-how"><b>怎么看：</b>{{ r.kpi.month }} 月初到今天（{{ r.kpi.through }}）的数字，和上个月、去年同月的<b>同一段日子</b>比，避免拿半个月和整月比。</p>
+    <div class="ca-tiles">
+      {% for t in r.kpi.tiles %}
+        <div class="ca-tile">
+          <div class="l">本月至今 · {{ t.label }}</div>
+          <div class="v">{{ money(t.value) }}<small>{{ CCY if t.money else "件" }}</small></div>
+          {% for base, d, text in [(t.last_month, t.vs_last_month, "上月同期"), (t.last_year, t.vs_last_year, "去年同期")] %}
+            <div class="s">
+              {% if d is none %}<span class="ca-flat">—</span> {{ text }}没有数据
+              {% else %}
+                {% set up = d > 0.0005 %}{% set down = d < -0.0005 %}
+                {% if t.good_up is none %}<span class="ca-flat">{{ "▲ 多" if up else ("▼ 少" if down else "＝ 持平") }} {{ "{:.0f}%".format(d|abs * 100) }}</span>
+                {% else %}<span class="{{ 'ca-up' if up else ('ca-down' if down else 'ca-flat') }}">{{ "▲ 高" if up else ("▼ 低" if down else "＝ 持平") }} {{ "{:.0f}%".format(d|abs * 100) }}</span>
+                {% endif %}
+                比{{ text }}（{{ money(base) }}）
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+      <div class="ca-tile">
+        <div class="l">现在 · 在库占用资金</div>
+        <div class="v">{{ money(r.kpi.stock_cost) }}<small>{{ CCY }}</small></div>
+        <div class="s">在库 {{ r.kpi.stock_count }} 件（只算收货的成本，寄卖不占资金）</div>
+      </div>
+    </div>
+  </section>
+
+  {# ------------------------------------------------------------ 9 cash #}
+  <section class="ca-card" id="ca-9">
+    <h3><span class="ca-num">9</span>资金进出 <span class="ca-pill">最近 {{ r.cash.months|length }} 个月</span></h3>
+    <p class="ca-how"><b>怎么看：</b>每个月卖货收回多少钱、收货花出去多少钱。回款长期高于支出，资金在回笼；支出长期更高，说明钱在不断压进库存。支出 = 当月收货成本 + 当月售出寄卖件应付给寄卖人的金额（按售出月估算）。</p>
+    {% set k = r.cash %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">销售回款合计</div><div class="v">{{ money(k.total_income) }}<small>{{ CCY }}</small></div></div>
+      <div class="ca-tile"><div class="l">支出合计</div><div class="v">{{ money(k.total_out) }}<small>{{ CCY }}</small></div></div>
+      <div class="ca-tile"><div class="l">净额</div><div class="v">{{ money(k.total_net) }}<small>{{ CCY }}</small></div><div class="s">{{ "回笼多于投入" if k.total_net >= 0 else "投入多于回笼，钱压进了库存" }}</div></div>
+    </div>
+    <div class="ca-sub">每月回款和支出（{{ CCY }}）</div>
+    <div class="ca-chart" style="height:290px;"><canvas id="c-cash"></canvas></div>
+    <div class="ca-sub">累计净额（{{ CCY }}）</div><p class="ca-cap">从图上第一个月开始累加；往上走是资金回笼，往下走是资金被库存占用</p>
+    <div class="ca-chart" style="height:220px;"><canvas id="c-cash-cum"></canvas></div>
+    <details><summary>查看数据表</summary>
+      <div class="ca-scroll"><table>
+        <tr><th>月份</th><th class="n">销售回款</th><th class="n">收货支出</th><th class="n">寄卖应付（估）</th><th class="n">净额</th><th class="n">累计净额</th></tr>
+        {% for m in k.months %}{% set i = loop.index0 %}
+          <tr><td>{{ m }}</td><td class="n">{{ money(k.income[i]) }}</td><td class="n">{{ money(k.purchase[i]) }}</td><td class="n">{{ money(k.payout[i]) }}</td><td class="n">{{ money(k.net[i]) }}</td><td class="n">{{ money(k.cumulative[i]) }}</td></tr>
+        {% endfor %}
+      </table></div>
+    </details>
+  </section>
+
+  {# ------------------------------------------------------------ 10 consignment #}
+  <section class="ca-card" id="ca-10">
+    <h3><span class="ca-num">10</span>寄卖</h3>
+    <p class="ca-how"><b>怎么看：</b>手上有多少寄卖货、卖得怎么样、最近该给谁结算。<b>注意：</b>系统目前不记录寄卖款有没有付，所以这里只能列出“最近 60 天售出的寄卖件”供你逐笔核对，不能告诉你哪笔已付。</p>
+    {% set g = r.consignment %}
+    {% if g.total %}
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">在库寄卖</div><div class="v">{{ g.in_stock }}<small>件</small></div><div class="s">约定金额合计 {{ money(g.in_stock_payout) }} {{ CCY }}；库龄中位 {{ days(g.median_age) }}</div></div>
+      <div class="ca-tile"><div class="l">最近 60 天售出</div><div class="v">{{ g.recent_n }}<small>件</small></div><div class="s">应付寄卖人 {{ money(g.recent_payout) }} {{ CCY }}</div></div>
+      <div class="ca-tile"><div class="l">历史已售寄卖</div><div class="v">{{ g.sold }}<small>件</small></div><div class="s">售出天数中位 {{ days(g.median_days) }}</div></div>
+      <div class="ca-tile"><div class="l">寄卖赚到的差价</div><div class="v">{{ money(g.fee_total) }}<small>{{ CCY }}</small></div><div class="s">占成交价的 {{ pct(g.fee_rate) }}</div></div>
+    </div>
+    {% if g.recent %}
+      <div class="ca-sub">最近 60 天售出的寄卖件（金额单位 {{ CCY }}）</div>
+      <div class="ca-scroll"><table>
+        <tr><th>售出时间</th><th>SKU</th><th>商品</th><th>寄卖人</th><th class="n">成交价</th><th class="n">应付寄卖人</th></tr>
+        {% for it in g.recent %}<tr><td>{{ it.sold_at|dt8 }}</td><td>{{ item_link(it.sku) }}</td><td>{{ it.name }}</td><td>{{ it.seller or "未填" }}</td><td class="n">{{ money(it.price) }}</td><td class="n">{{ money(it.payout) }}</td></tr>{% endfor %}
+      </table></div>
+    {% endif %}
+    {% if g.people %}
+      <div class="ca-sub">按寄卖人（前 20，金额单位 {{ CCY }}）</div>
+      <div class="ca-scroll"><table>
+        <tr><th>寄卖人</th><th class="n">在库</th><th class="n">在库约定金额</th><th class="n">已售</th><th class="n">已售应付合计</th><th class="n">差价收入</th><th class="n">售出天数中位</th><th>最近售出</th></tr>
+        {% for p in g.people %}<tr><td>{{ p.label }}</td><td class="n">{{ p.in_stock }}</td><td class="n">{{ money(p.in_stock_payout) }}</td><td class="n">{{ p.sold }}</td><td class="n">{{ money(p.sold_payout) }}</td><td class="n">{{ money(p.fee) }}</td><td class="n">{{ days(p.median_days) }}</td><td>{{ (p.last_sold|dt8)[:10] if p.last_sold else "—" }}</td></tr>{% endfor %}
+      </table></div>
+    {% endif %}
+    {% else %}<div class="ca-empty">当前范围内没有寄卖商品。</div>{% endif %}
+  </section>
+
+  {# ------------------------------------------------------------ 11 quality #}
+  <section class="ca-card" id="ca-11">
+    <h3><span class="ca-num">11</span>数据质量</h3>
+    <p class="ca-how"><b>怎么看：</b>上面的分析准不准，取决于这些字段填得全不全。数量不是 0 的项，右边列出了最近录入的几件，点 SKU 就能去补。当前快照，不受时间范围影响。</p>
+    {% set q = r.quality %}
+    <div class="ca-scroll"><table>
+      <tr><th>检查项</th><th class="n">数量</th><th style="min-width:140px;">占比</th><th>影响</th><th>最近的几件</th></tr>
+      {% for c in q.checks %}
+        <tr>
+          <td>{% if c.count %}<span class="ca-q-bad">✕</span>{% else %}<span class="ca-q-ok">✓</span>{% endif %} {{ c.label }}</td>
+          <td class="n">{{ c.count }} / {{ c.base }}</td>
+          <td>{% if c.base %}<div class="ca-meter" role="img" aria-label="{{ pct(c.share) }}"><i style="width:{{ '%.1f' % ((c.share or 0) * 100) }}%"></i></div><span class="muted">{{ pct(c.share) }}</span>{% endif %}</td>
+          <td class="muted">{{ c.impact }}</td>
+          <td>{% for sm in c.samples %}{{ item_link(sm.sku) }}{{ "、" if not loop.last }}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+    </table></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js"></script>
+<script>
+(() => {
+  if (typeof Chart === "undefined") {
+    document.querySelectorAll(".ca-chart").forEach(el => {
+      el.style.height = "auto";
+      el.innerHTML = '<div class="ca-empty">图表组件没有加载成功（需要访问 cdn.jsdelivr.net）。上下的数字和表格不受影响。</div>';
+    });
+    return;
+  }
+  const CCY = {{ CCY|tojson }};
+  const S1 = "#2a78d6", S2 = "#eb6834", GRID = "#e1e0d9", AXIS = "#c3c2b7", INK = "#0b0b0b", INK2 = "#52514e", MUTED = "#77756f";
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.font.size = 12;
+  Chart.defaults.color = INK2;
+  Chart.defaults.animation = false;
+  const fmt = v => (v === null || v === undefined || Number.isNaN(v)) ? "—"
+    : Number(v).toLocaleString("en-US", {maximumFractionDigits: Math.abs(v) < 100 && !Number.isInteger(v) ? 1 : 0});
+  const compact = v => Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1).replace(/\.0$/, "") + "M"
+    : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(1).replace(/\.0$/, "") + "K" : fmt(v);
+
+  // Value at the bar tip (single-series bars only).
+  const tipLabels = {
+    id: "tipLabels",
+    afterDatasetsDraw(chart, _args, opts) {
+      if (!opts || !opts.show) return;
+      const {ctx} = chart, horizontal = chart.options.indexAxis === "y";
+      ctx.save();
+      ctx.fillStyle = INK; ctx.font = `600 11px ${Chart.defaults.font.family}`;
+      chart.getDatasetMeta(0).data.forEach((bar, i) => {
+        const raw = chart.data.datasets[0].data[i];
+        if (raw === null || raw === undefined) return;
+        const text = (opts.format || compact)(raw);
+        if (horizontal) {
+          const neg = raw < 0;
+          ctx.textAlign = neg ? "right" : "left"; ctx.textBaseline = "middle";
+          ctx.fillText(text, bar.x + (neg ? -6 : 6), bar.y);
+        } else {
+          ctx.textAlign = "center"; ctx.textBaseline = raw < 0 ? "top" : "bottom";
+          ctx.fillText(text, bar.x, bar.y + (raw < 0 ? 4 : -4));
+        }
+      });
+      ctx.restore();
+    },
+  };
+  // Name beside each bubble; tries right / left / above / below so names do not overlap.
+  const pointLabels = {
+    id: "pointLabels",
+    afterDatasetsDraw(chart, _args, opts) {
+      if (!opts || !opts.show) return;
+      const {ctx, chartArea} = chart;
+      const pts = chart.getDatasetMeta(0).data.map((el, i) => ({x: el.x, y: el.y, p: chart.data.datasets[0].data[i]}));
+      const hit = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
+      const taken = pts.map(q => ({l: q.x - q.p.r, r: q.x + q.p.r, t: q.y - q.p.r, b: q.y + q.p.r, own: q}));
+      ctx.save();
+      ctx.fillStyle = INK; ctx.font = `600 11px ${Chart.defaults.font.family}`; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+      pts.slice().sort((a, b) => b.p.r - a.p.r).forEach(q => {
+        const w = ctx.measureText(q.p.label).width, h = 14, gap = q.p.r + 5;
+        const options = [
+          {l: q.x + gap, t: q.y - h / 2}, {l: q.x - gap - w, t: q.y - h / 2},
+          {l: q.x - w / 2, t: q.y - gap - h}, {l: q.x - w / 2, t: q.y + gap},
+        ].map(o => ({l: o.l, r: o.l + w, t: o.t, b: o.t + h}));
+        const inside = o => o.l >= chartArea.left && o.r <= chart.width - 2 && o.t >= 2 && o.b <= chartArea.bottom;
+        const pick = options.find(o => inside(o) && !taken.some(t => t.own !== q && hit(o, t))) || options.find(inside) || options[0];
+        taken.push(pick);
+        ctx.fillText(q.p.label, pick.l, pick.t + h / 2);
+      });
+      ctx.restore();
+    },
+  };
+  Chart.register(tipLabels, pointLabels);
+
+  const scale = (extra = {}) => Object.assign({
+    grid: {color: GRID, drawTicks: false}, border: {color: AXIS},
+    ticks: {color: MUTED, padding: 6},
+  }, extra);
+  const noGrid = (extra = {}) => Object.assign({grid: {display: false}, border: {color: AXIS}, ticks: {color: INK2, padding: 6}}, extra);
+  const tooltip = unit => ({
+    backgroundColor: "#1f2325", padding: 10, cornerRadius: 6, displayColors: true, boxWidth: 8, boxHeight: 8, usePointStyle: true,
+    callbacks: {label: c => {
+      const v = c.chart.options.indexAxis === "y" ? c.parsed.x : c.parsed.y;
+      const name = c.chart.data.datasets.length > 1 ? c.dataset.label + "：" : "";
+      const extra = c.dataset.extra ? "（" + c.dataset.extra[c.dataIndex] + "）" : "";
+      return ` ${name}${fmt(v)} ${unit}${extra}`;
+    }},
+  });
+  const empty = id => !document.getElementById(id);
+  const showEmpty = (id, text) => {
+    const box = document.getElementById(id).parentElement;
+    box.style.height = "auto"; box.innerHTML = `<div class="ca-empty">${text}</div>`;
+  };
+
+  function bars(id, labels, data, {unit = "", horizontal = false, extra = null, format = null, wrap = null} = {}) {
+    if (empty(id)) return;
+    if (!labels.length || data.every(v => !v)) return showEmpty(id, "这一项没有数据。");
+    if (horizontal && wrap) document.getElementById(wrap).style.height = (labels.length * 34 + 46) + "px";
+    const value = scale({beginAtZero: true, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}});
+    const cat = noGrid();
+    new Chart(document.getElementById(id), {
+      type: "bar",
+      data: {labels, datasets: [{label: unit, data, extra, backgroundColor: S1, hoverBackgroundColor: "#1c5cab",
+        borderRadius: 4, maxBarThickness: 24, categoryPercentage: 0.72}]},
+      options: {
+        indexAxis: horizontal ? "y" : "x", maintainAspectRatio: false,
+        layout: {padding: horizontal ? {right: 56} : {top: 22}},
+        scales: horizontal ? {x: value, y: cat} : {x: cat, y: value},
+        plugins: {legend: {display: false}, tooltip: tooltip(unit), tipLabels: {show: true, format}},
+      },
+    });
+  }
+
+  function line(id, labels, data, {unit = "", extra = null, zeroLine = false} = {}) {
+    if (empty(id)) return;
+    if (!labels.length) return showEmpty(id, "这一项没有数据。");
+    new Chart(document.getElementById(id), {
+      type: "line",
+      data: {labels, datasets: [{label: unit, data, extra, borderColor: S1, backgroundColor: "rgba(42,120,214,0.10)", fill: true,
+        borderWidth: 2, tension: 0, pointRadius: 4, pointHoverRadius: 6, pointBackgroundColor: S1, pointBorderColor: "#fff", pointBorderWidth: 2}]},
+      options: {
+        maintainAspectRatio: false, interaction: {mode: "index", intersect: false},
+        scales: {x: noGrid(), y: scale({beginAtZero: !zeroLine, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}})},
+        plugins: {legend: {display: false}, tooltip: tooltip(unit)},
+      },
+    });
+  }
+
+  {% set a = r.aging %}
+  {% if a.stock_count %}
+  bars("c-age-n", {{ a.labels|tojson }}, {{ a.counts|tojson }}, {unit: "件"});
+  bars("c-age-cost", {{ a.labels|tojson }}, {{ a.costs|tojson }}, {unit: CCY});
+  {% endif %}
+
+  {% set t = r.turnover %}
+  {% if t.n %}
+  bars("c-turn-hist", {{ t.hist_labels|tojson }}, {{ t.hist_counts|tojson }}, {unit: "件"});
+  bars("c-turn-brand", {{ t.brands|map(attribute="label")|list|tojson }}, {{ t.brands|map(attribute="median")|list|tojson }},
+       {unit: "天", horizontal: true, wrap: "w-turn-brand", extra: {{ t.brands|map(attribute="n")|list|tojson }}.map(n => n + " 件")});
+  line("c-turn-month", {{ t.months|tojson }}, {{ t.month_median|tojson }}, {unit: "天", extra: {{ t.month_n|tojson }}.map(n => n + " 件")});
+  {% endif %}
+
+  {% if r.returns.overall.n %}
+  (() => {
+    const pts = {{ r.returns.points|tojson }};
+    if (!pts.length) return showEmpty("c-ret-bubble", "没有售出 3 件以上、且有利润数字的品牌。");
+    const maxN = Math.max(...pts.map(p => p.n));
+    const data = pts.map(p => ({x: p.x, y: p.y, r: 6 + 16 * Math.sqrt(p.n / maxN), label: p.label, n: p.n}));
+    new Chart(document.getElementById("c-ret-bubble"), {
+      type: "bubble",
+      data: {datasets: [{label: "品牌", data, backgroundColor: "rgba(42,120,214,0.72)", borderColor: "#ffffff", borderWidth: 2, hoverBackgroundColor: S1}]},
+      options: {
+        maintainAspectRatio: false, layout: {padding: {top: 14, right: 70}},
+        scales: {
+          x: scale({beginAtZero: true, title: {display: true, text: "周转天数中位数（越靠左卖得越快）", color: INK2}}),
+          y: scale({title: {display: true, text: "利润率 %（越靠上越赚）", color: INK2}, ticks: {color: MUTED, padding: 6, callback: v => v + "%"}}),
+        },
+        plugins: {legend: {display: false}, pointLabels: {show: true}, tooltip: Object.assign(tooltip(""), {callbacks: {
+          label: c => [` ${c.raw.label}`, ` 利润率 ${fmt(c.raw.y)}%`, ` 周转 ${fmt(c.raw.x)} 天`, ` 售出 ${c.raw.n} 件`],
+        }})},
+      },
+    });
+  })();
+  {% endif %}
+
+  {% set s = r.sourcing %}
+  {% if s.rows %}
+  bars("c-src", {{ s.chart_labels|tojson }}, {{ s.chart_profit|tojson }}, {unit: CCY, horizontal: true, wrap: "w-src"});
+  {% endif %}
+
+  {% set d = r.discount %}
+  {% if d.n %}
+  bars("c-disc-age", {{ d.age_labels|tojson }}, {{ d.age_avg|tojson }}, {unit: "%", format: v => v + "%", extra: {{ d.age_n|tojson }}.map(n => n + " 件")});
+  bars("c-disc-brand", {{ d.brands|map(attribute="label")|list|tojson }}, {{ d.brands|map(attribute="avg")|list|tojson }}.map(v => Math.round(v * 1000) / 10),
+       {unit: "%", horizontal: true, wrap: "w-disc-brand", format: v => v + "%", extra: {{ d.brands|map(attribute="n")|list|tojson }}.map(n => n + " 件")});
+  {% endif %}
+
+  {% set c = r.channels %}
+  {% if c.n %}
+  {% for id, wrap, rows in [("c-ch", "w-ch", c.channel), ("c-pay", "w-pay", c.payment), ("c-staff", "w-staff", c.staff)] %}
+  bars({{ id|tojson }}, {{ rows[:8]|map(attribute="label")|list|tojson }}, {{ rows[:8]|map(attribute="revenue")|list|tojson }}.map(Math.round),
+       {unit: CCY, horizontal: true, wrap: {{ wrap|tojson }}, extra: {{ rows[:8]|map(attribute="n")|list|tojson }}.map(n => n + " 笔")});
+  {% endfor %}
+  {% endif %}
+
+  {% set f = r.flow %}
+  {% if f.steps | sum(attribute="n") %}
+  bars("c-flow", {{ f.steps|map(attribute="label")|list|tojson }}, {{ f.steps|map(attribute="median")|list|tojson }}.map(v => v === null ? null : Math.round(v * 10) / 10),
+       {unit: "天", horizontal: true, wrap: "w-flow", extra: {{ f.steps|map(attribute="n")|list|tojson }}.map(n => n + " 件")});
+  {% endif %}
+
+  {% set k = r.cash %}
+  new Chart(document.getElementById("c-cash"), {
+    type: "bar",
+    data: {labels: {{ k.months|tojson }}, datasets: [
+      {label: "销售回款", data: {{ k.income|tojson }}, backgroundColor: S1, borderRadius: 4, maxBarThickness: 18},
+      {label: "支出（收货 + 寄卖应付）", data: {{ k.outflow|tojson }}, backgroundColor: S2, borderRadius: 4, maxBarThickness: 18},
+    ]},
+    options: {
+      maintainAspectRatio: false, interaction: {mode: "index", intersect: false},
+      datasets: {bar: {categoryPercentage: 0.7, barPercentage: 0.86}},
+      scales: {x: noGrid(), y: scale({beginAtZero: true, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}})},
+      plugins: {legend: {position: "top", align: "start", labels: {color: INK2, boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: "rectRounded"}},
+                tooltip: tooltip(CCY)},
+    },
+  });
+  line("c-cash-cum", {{ k.months|tojson }}, {{ k.cumulative|tojson }}, {unit: CCY, zeroLine: true});
+})();
+</script>
+{% endblock %}

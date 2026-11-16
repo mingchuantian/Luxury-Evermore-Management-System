@@ -47,8 +47,22 @@
   </div>
 </div>
 
+{% set SCAN_LOCATION_EN = {"store": "Store display", "room": "Back room", "legacy": "Legacy check (no location)"} %}
 {% macro table_header() %}
-  <tr><th>Date</th><th class="col-img">Image</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Brand</th><th>Type</th><th>Seller</th><th>Note</th><th>Cost</th><th>Price</th><th>Status</th><th>Action</th></tr>
+  <tr><th>Date</th><th class="col-img">Image</th><th>SKU</th><th>Serial Code</th><th>Name</th><th>Brand</th><th>Type</th><th>Seller</th><th>Note</th>{% if scan_latest is not none %}<th>Inventory Check</th>{% endif %}<th>Cost</th><th>Price</th><th>Status</th><th>Action</th></tr>
+{% endmacro %}
+{% macro scan_cell(sku) %}
+  {% if scan_latest is not none %}
+    {% set last_scan = scan_latest.get(sku) %}
+    <td class="muted">
+      {% if last_scan %}
+        {{ last_scan.at|dt8 if last_scan.at else "-" }}
+        <div>{{ SCAN_LOCATION_EN.get(last_scan.location_key, last_scan.location_key) }}{% if last_scan.active %} (check in progress){% endif %}</div>
+      {% else %}
+        None
+      {% endif %}
+    </td>
+  {% endif %}
 {% endmacro %}
 
 <h3>Management Items</h3>
@@ -77,6 +91,7 @@
         <td class="muted">{{ item.source_type or "" }}</td>
         <td class="muted">{{ item.seller_name or "" }}</td>
         <td class="muted">{{ item.note or "" }}</td>
+        {{ scan_cell(item.sku) }}
         <td>{{ item.cost }} ({{ item.cost_currency or item.currency or "" }})</td>
         <td>{% if item.status == "SOLD" %}{{ item._sold.sold_price or 0 }}{% else %}{{ item.listing_price or 0 }}{% endif %}</td>
         <td>{{ item.status }}</td>
@@ -118,7 +133,7 @@
           {% endif %}
         </td>
         <td class="muted">{{ item.brand }}</td>
-        <td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+        <td>-</td><td>-</td><td>-</td>{{ scan_cell(item.sku) }}<td>-</td><td>-</td><td>-</td>
         <td>
           {% if session.get("role") == "Management" and item.status in ["RECEIVED", "ON_SHELF"] %}
             <a class="btn" href="{{ url_for('management_sale_new_form', item_id=item._id|string) }}" style="text-decoration:none; display:inline-block;">Mark as Sold</a>

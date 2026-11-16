@@ -32,6 +32,7 @@ from ..constants import (
     OWNERSHIP_ADMIN,
     OWNERSHIP_MANAGEMENT,
 )
+from ..inventory_scan_history import scan_history_for_skus
 from ..item_creation import create_item_from_form
 from ..utils import (
     BUSINESS_TZ,
@@ -59,6 +60,7 @@ def register(
     audit_logs=None,
     users=None,
     management_payments=None,
+    inventory_check_sessions=None,
 ):
     def _dt8_date_str(value):
         if value is None or value == "":
@@ -648,8 +650,17 @@ def register(
         ]
         admin_items.sort(key=_display_date_timestamp, reverse=True)
 
+        # Inventory check records, derived live from the check sessions (read-only).
+        scan_latest = None
+        if inventory_check_sessions is not None:
+            history = scan_history_for_skus(
+                inventory_check_sessions, [doc.get("sku") for doc in docs]
+            )
+            scan_latest = {sku: records[0] for sku, records in history.items()}
+
         return render_template(
             "management/items.html",
+            scan_latest=scan_latest,
             admin_items=admin_items,
             management_items=[doc for doc in docs if doc.get("ownership") == OWNERSHIP_MANAGEMENT],
             MANAGEMENT_STATUSES=MANAGEMENT_STATUSES,
@@ -722,9 +733,15 @@ def register(
         item["_purchase_at_local"] = format_datetime_local(
             item.get("purchase_at") or item.get("created_at")
         )
+        scan_records = None
+        if inventory_check_sessions is not None:
+            scan_records = scan_history_for_skus(
+                inventory_check_sessions, [item.get("sku")]
+            ).get(item.get("sku"), [])
         return render_template(
             "management/item_detail.html",
             item=item,
+            scan_records=scan_records,
             BRAND_OPTIONS=BRAND_OPTIONS,
             read_only=_management_read_only(item),
         )

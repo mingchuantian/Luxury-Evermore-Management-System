@@ -33,6 +33,20 @@
   {% endif %}
 </div>
 
+{% if scan_records is not none %}
+{% set SCAN_LOCATION_EN = {"store": "Store display", "room": "Back room", "legacy": "Legacy check (no location)"} %}
+<h3>Inventory Check Records</h3>
+{% if scan_records %}
+<ul>
+  {% for r in scan_records %}
+    <li class="muted">{{ r.at|dt8 if r.at else "-" }} - {{ SCAN_LOCATION_EN.get(r.location_key, r.location_key) }}{% if r.active %} (check in progress){% endif %}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">None</p>
+{% endif %}
+{% endif %}
+
 <hr>
 {% if read_only %}
 <p class="muted">This item has been sold and is now read-only. Contact Admin if any information needs to be corrected.</p>

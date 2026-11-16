@@ -312,6 +312,7 @@
         <a href="{{ url_for('item_new_buyin_form') }}">新增收货</a>
         <a href="{{ url_for('item_new_consignment_form') }}">新增寄卖</a>
         <a href="{{ url_for('analytics') }}">数据分析</a>
+        {% if session.get("role") == "Admin" %}<a href="/claude-analytics">Claude新增分析</a>{% endif %}
         <a href="{{ url_for('audit_history') }}">操作历史</a>
         <a href="{{ url_for('notes_list') }}">随记</a>
         {% if session.get("role") == "Admin" %}

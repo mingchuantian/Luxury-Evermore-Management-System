@@ -11,6 +11,7 @@ from .qr_check import register as register_qr_check
 from .shopify_files import register as register_shopify_files
 from .inventory_check import register as register_inventory_check
 from .shopify_stock_check import register as register_shopify_stock_check
+from .claude_analytics import register as register_claude_analytics
 
 
 def register_all(
@@ -36,6 +37,7 @@ def register_all(
         audit_logs=audit_logs,
         users=users,
         management_payments=management_payments,
+        inventory_check_sessions=inventory_check_sessions,
     )
     register_dashboard(
         app,
@@ -45,9 +47,16 @@ def register_all(
         maintenance_logs=maintenance_logs,
         background_jobs=background_jobs,
     )
-    register_items(app, items, audit_logs=audit_logs)
+    register_items(
+        app, items, audit_logs=audit_logs,
+        inventory_check_sessions=inventory_check_sessions,
+    )
     register_sales(app, items, audit_logs=audit_logs)
     register_analytics(app, items)
+    # Claude新增分析: read-only, always the real items collection.
+    register_claude_analytics(
+        app, management_items if management_items is not None else items
+    )
     register_notes(app, notes)
     register_qr_check(app, items)
     register_shopify_files(app)

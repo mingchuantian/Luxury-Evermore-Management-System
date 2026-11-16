@@ -110,7 +110,7 @@
 <table>
   <tr>
     <th>收货/寄卖日期</th><th class="col-img">图片</th><th>SKU</th><th>品牌 和 名称</th><th>编码</th><th>类型</th>
-    <th>卖家/寄卖人</th><th>备注</th><th>成本</th>
+    <th>卖家/寄卖人</th><th>备注</th>{% if scan_latest is not none %}<th>盘查记录</th>{% endif %}<th>成本</th>
     {% if session.get("role") != "Staff" %}<th>售价</th>{% endif %}
     <th>状态</th><th>操作</th>
   </tr>
@@ -150,6 +150,17 @@
     </td>
     <td class="muted">{{ it.seller_name }}</td>
     <td class="muted">{{ it.note }}</td>
+    {% if scan_latest is not none %}
+      {% set last_scan = scan_latest.get(it.sku) %}
+      <td class="muted">
+        {% if last_scan %}
+          {{ last_scan.at|dt8 if last_scan.at else "-" }}
+          <div>{{ last_scan.location }}{% if last_scan.active %}（盘查进行中）{% endif %}</div>
+        {% else %}
+          无
+        {% endif %}
+      </td>
+    {% endif %}
     <td>{{ it.cost }} ({{ it.cost_currency or it.currency or "SGD" }})</td>
     {% if session.get("role") != "Staff" %}
       <td>

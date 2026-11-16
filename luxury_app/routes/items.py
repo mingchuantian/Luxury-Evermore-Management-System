@@ -3,7 +3,7 @@ from math import ceil
 from datetime import timedelta, timezone
 
 from bson import ObjectId
-from flask import Response, flash, redirect, render_template, request, send_file, url_for
+from flask import Response, flash, redirect, render_template, request, send_file, session, url_for
 from pymongo import DESCENDING
 
 from models import STATUS, now
@@ -38,10 +38,12 @@ from consignment_receipt_template.consignment_settlement_generation import (
 )
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from .sales import _sync_sold_to_shopify
+from ..auth import ROLE_ADMIN
+from ..inventory_scan_history import scan_history_for_skus
 from .. import shopify_maintenance
 
 
-def register(app, items, audit_logs=None):
+def register(app, items, audit_logs=None, inventory_check_sessions=None):
     def _dt8_date_str(value) -> str:
         """
         Format a datetime (aware/naive/iso str) as YYYY-MM-DD in UTC+8.
@@ -233,9 +235,18 @@ def register(app, items, audit_logs=None):
         )
         for d in docs:
             _attach_sold_view_fields(d)
+        # 盘查记录: Admin only (inventory checks are Admin-only). Live, not stored.
+        scan_latest = None
+        if session.get("role") == ROLE_ADMIN and inventory_check_sessions is not None:
+            history = scan_history_for_skus(
+                inventory_check_sessions, [doc.get("sku") for doc in docs]
+            )
+            scan_latest = {sku: records[0] for sku, records in history.items()}
+
         return render_template(
             "items.html",
             shopify_sync=_shopify_sync_info(),
+            scan_latest=scan_latest,
             items=docs,
             STATUS=STATUS,
             STATUS_ZH=STATUS_ZH,
@@ -302,9 +313,16 @@ def register(app, items, audit_logs=None):
             it.get("purchase_at") or it.get("created_at")
         )
 
+        scan_records = None
+        if session.get("role") == ROLE_ADMIN and inventory_check_sessions is not None:
+            scan_records = scan_history_for_skus(
+                inventory_check_sessions, [it.get("sku")]
+            ).get(it.get("sku"), [])
+
         return render_template(
             "item_detail.html",
             item=it,
+            scan_records=scan_records,
             STATUS=STATUS,
             STATUS_ZH=STATUS_ZH,
             BRAND_OPTIONS=BRAND_OPTIONS,
