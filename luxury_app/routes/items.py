@@ -161,7 +161,7 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             page = 1
         if page < 1:
             page = 1
-        per_page = 1000
+        per_page = 500
 
         filt = {}
         if status:

@@ -214,18 +214,19 @@ class ZeroByVariantTests(unittest.TestCase):
 
 
 ROW = {
-    "variant_id": "gid://shopify/ProductVariant/1", "sku": "SOLD001", "reason": "sold",
+    "variant_id": "gid://shopify/ProductVariant/1", "product_id": "gid://shopify/Product/1",
+    "sku": "SOLD001", "reason": "sold",
     "detail": "", "system_name": "Chanel CF", "shopify_title": "Chanel Classic Flap",
     "image": "https://cdn/x.jpg", "tracked": True,
     "storefront_url": "https://luxuryevermore.com/products/cf",
     "admin_url": "https://admin.shopify.com/store/71eaf7/products/1",
     "admin_link_label": "打开",
 }
-MISSING_ROW = dict(ROW, variant_id="gid://shopify/ProductVariant/2", sku="TYPO01",
+MISSING_ROW = dict(ROW, variant_id="gid://shopify/ProductVariant/2", product_id="gid://shopify/Product/2", sku="TYPO01",
                    reason="missing", system_name="", shopify_title="Dior Lady")
-UNSELLABLE_ROW = dict(ROW, variant_id="gid://shopify/ProductVariant/3", sku="ZERO001",
+UNSELLABLE_ROW = dict(ROW, variant_id="gid://shopify/ProductVariant/3", product_id="gid://shopify/Product/3", sku="ZERO001",
                       reason="unsellable", detail="Shopify库存为0", system_name="A")
-NOTFOUND_ROW = dict(ROW, variant_id="", sku="GONE001", reason="notfound",
+NOTFOUND_ROW = dict(ROW, variant_id="", product_id="", sku="GONE001", reason="notfound",
                     system_name="B", shopify_title="",
                     admin_url="https://admin.shopify.com/store/71eaf7/products?query=Kelly",
                     admin_link_label="在Shopify搜索")
@@ -282,7 +283,7 @@ class RouteTests(unittest.TestCase):
     def test_each_row_shows_its_situation(self):
         html = self._get("/shopify-stock").get_data(as_text=True)
         for css in ("stock-sold", "stock-missing", "stock-unsellable", "stock-notfound"):
-            self.assertEqual(html.count(f'<tr class="{css}">'), 2)  # legend + row
+            self.assertEqual(html.count(f'<tr class="{css}"'), 2)  # legend + row
         self.assertIn('<div class="stock-sold-text">系统内已售出，但 Shopify 上还在卖</div>', html)
         self.assertIn('<div class="stock-missing-text">Shopify 上在卖，但系统中无此SKU</div>', html)
         self.assertIn('<div class="stock-unsellable-text">系统内上架在售，但 Shopify 上买不了（Shopify库存为0）</div>', html)
@@ -293,8 +294,9 @@ class RouteTests(unittest.TestCase):
         self.assertIn("手动刷新", html)
         self.assertIn("每2小时自动更新", html)
         self.assertIn("不保存到数据库", html)
-        for label in ("系统内已售出 1", "系统中无此SKU 1", "Shopify上买不了 1", "Shopify上找不到 1"):
-            self.assertIn(label, html)
+        for label, key in (("系统内已售出", "sold"), ("系统中无此SKU", "missing"),
+                           ("Shopify上买不了", "unsellable"), ("Shopify上找不到", "notfound")):
+            self.assertIn(f'{label} <span data-count="{key}">1</span>', html)
         # Menu shows the red total.
         self.assertIn('href="/shopify-stock">Shopify库存更新', html)
         self.assertIn("(4)", html)
@@ -362,6 +364,9 @@ class ProjectingWritableInventory(FakeInventory):
     def find(self, query, projection=None):
         return super().find(query)
 
+    def find_one(self, query, projection=None, *args, **kwargs):
+        return super().find_one(query)
+
 
 class MarkReceivedTests(unittest.TestCase):
     """Only the in-memory list and the item status change; nothing else."""
@@ -417,6 +422,166 @@ class MarkReceivedTests(unittest.TestCase):
         self._post("GONE001")
         rows, _ = _scan([], [dict(d) for d in self.items.docs])
         self.assertNotIn("GONE001", [r["sku"] for r in rows])
+
+
+class SetVariantSkuTests(unittest.TestCase):
+    def _run(self, responses):
+        calls = []
+
+        def gql(query, variables, token_provider=None):
+            calls.append((query, variables))
+            return responses.pop(0)
+
+        with patch.object(shopify_inventory, "shopify_gql", side_effect=gql):
+            result = shopify_inventory.set_shopify_variant_sku(
+                "gid://shopify/Product/1", "gid://shopify/ProductVariant/1", "NEW0001",
+                token_provider=FakeProvider(),
+            )
+        return result, calls
+
+    def test_writes_sku_through_inventory_item(self):
+        result, calls = self._run([
+            {"productVariants": {"nodes": []}},
+            {"productVariantsBulkUpdate": {"productVariants": [
+                {"id": "gid://shopify/ProductVariant/1", "sku": "NEW0001"}], "userErrors": []}},
+        ])
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[0][1], {"q": 'sku:"NEW0001"'})
+        self.assertEqual(calls[1][1], {
+            "productId": "gid://shopify/Product/1",
+            "variants": [{"id": "gid://shopify/ProductVariant/1", "inventoryItem": {"sku": "NEW0001"}}],
+        })
+
+    def test_refuses_sku_used_by_another_listing(self):
+        result, calls = self._run([{"productVariants": {"nodes": [
+            {"id": "gid://shopify/ProductVariant/9", "sku": "NEW0001", "product": {"title": "Other bag"}}]}}])
+        self.assertFalse(result["ok"])
+        self.assertIn("Other bag", result["message"])
+        self.assertEqual(len(calls), 1)   # never reached the mutation
+
+    def test_same_variant_already_having_it_is_not_a_clash(self):
+        result, _ = self._run([
+            {"productVariants": {"nodes": [{"id": "gid://shopify/ProductVariant/1", "sku": "NEW0001"}]}},
+            {"productVariantsBulkUpdate": {"productVariants": [
+                {"id": "gid://shopify/ProductVariant/1", "sku": "NEW0001"}], "userErrors": []}},
+        ])
+        self.assertTrue(result["ok"])
+
+    def test_errors_are_returned(self):
+        result, _ = self._run([
+            {"productVariants": {"nodes": []}},
+            {"productVariantsBulkUpdate": {"productVariants": [], "userErrors": [{"message": "nope"}]}},
+        ])
+        self.assertFalse(result["ok"])
+        self.assertIn("nope", result["message"])
+        bad = shopify_inventory.set_shopify_variant_sku("x", "y", "NEW0001", token_provider=FakeProvider())
+        self.assertFalse(bad["ok"])
+
+
+class ChangeSkuRouteTests(unittest.TestCase):
+    _app = RouteTests._app
+    _login = staticmethod(RouteTests._login)
+    tearDown = RouteTests.tearDown
+
+    def setUp(self):
+        RouteTests.setUp(self)
+        self.items = ProjectingWritableInventory([
+            {"_id": ObjectId(), "sku": "NEW0001", "brand": "Chanel", "name": "CF", "status": "RECEIVED"},
+            {"_id": ObjectId(), "sku": "GONE002", "name": "Sold one", "status": "SOLD"},
+        ])
+        self.audit_logs = FakeAuditLogs()
+
+    def _post(self, url, data, fetch=True, result=None):
+        app = self._app()
+        headers = {"X-Requested-With": "fetch"} if fetch else {}
+        with patch(
+            "luxury_app.routes.shopify_stock_check.set_shopify_variant_sku",
+            return_value=result or {"ok": True, "message": ""},
+        ) as setter, app.test_client() as client:
+            self._login(client, ROLE_ADMIN)
+            response = client.post(url, data=data, headers=headers)
+        return response, setter
+
+    def test_change_sku_for_sold_and_missing_rows(self):
+        for row in (ROW, MISSING_ROW):
+            RouteTests.setUp(self)
+            response, setter = self._post("/shopify-stock/update-sku",
+                                          {"variant_id": row["variant_id"], "sku": " new0001 "})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json["ok"])
+            self.assertIn("Chanel CF", response.json["message"])
+            setter.assert_called_once_with(row["product_id"], row["variant_id"], "NEW0001")
+            self.assertNotIn(row["variant_id"], [r["variant_id"] for r in check.snapshot()["rows"]])
+        # Nothing in the database changes.
+        self.assertEqual([d["status"] for d in self.items.docs], ["RECEIVED", "SOLD"])
+
+    def test_change_sku_is_validated_before_calling_shopify(self):
+        cases = [
+            ({"variant_id": UNSELLABLE_ROW["variant_id"], "sku": "NEW0001"}, "只有"),
+            ({"variant_id": ROW["variant_id"], "sku": "NOPE999"}, "找不到"),
+            ({"variant_id": ROW["variant_id"], "sku": "GONE002"}, "已经售出"),
+            ({"variant_id": ROW["variant_id"], "sku": "SOLD001"}, "一样"),
+            ({"variant_id": ROW["variant_id"], "sku": "a b!"}, "格式"),
+            ({"variant_id": "gid://shopify/ProductVariant/999", "sku": "NEW0001"}, "不在列表"),
+        ]
+        for data, expected in cases:
+            response, setter = self._post("/shopify-stock/update-sku", data)
+            self.assertEqual(response.status_code, 400, data)
+            self.assertIn(expected, response.json["message"])
+            setter.assert_not_called()
+
+    def test_shopify_failure_keeps_row(self):
+        response, _ = self._post("/shopify-stock/update-sku",
+                                 {"variant_id": ROW["variant_id"], "sku": "NEW0001"},
+                                 result={"ok": False, "message": "Shopify 上已有其他商品使用 NEW0001"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("已有其他商品", response.json["message"])
+        self.assertIn(ROW["variant_id"], [r["variant_id"] for r in check.snapshot()["rows"]])
+
+    def test_lookup_sku(self):
+        app = self._app()
+        with app.test_client() as client:
+            self._login(client, ROLE_ADMIN)
+            found = client.get("/shopify-stock/lookup-sku?sku=new0001").json
+            sold = client.get("/shopify-stock/lookup-sku?sku=GONE002").json
+            missing = client.get("/shopify-stock/lookup-sku?sku=NOPE999").json
+            self._login(client, ROLE_STAFF)
+            blocked = client.get("/shopify-stock/lookup-sku?sku=NEW0001").status_code
+        self.assertEqual((found["found"], found["usable"], found["name"]), (True, True, "Chanel CF"))
+        self.assertEqual(found["status_zh"], "已到货")
+        self.assertEqual((sold["found"], sold["usable"]), (True, False))
+        self.assertFalse(missing["found"])
+        self.assertEqual(blocked, 403)
+
+    def test_zero_replies_in_place(self):
+        with patch(
+            "luxury_app.routes.shopify_stock_check.zero_shopify_inventory_for_variant",
+            return_value={"status": "zeroed", "ok": True, "message": ""},
+        ):
+            response, _ = self._post("/shopify-stock/zero", {"variant_id": ROW["variant_id"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["ok"])
+        self.assertIn("库存设置为 0", response.json["message"])
+        # Without JavaScript it still works the old way.
+        RouteTests.setUp(self)
+        with patch(
+            "luxury_app.routes.shopify_stock_check.zero_shopify_inventory_for_variant",
+            return_value={"status": "zeroed", "ok": True, "message": ""},
+        ):
+            response, _ = self._post("/shopify-stock/zero", {"variant_id": ROW["variant_id"]}, fetch=False)
+        self.assertEqual(response.status_code, 302)
+
+    def test_change_sku_button_only_on_sold_and_missing_rows(self):
+        app = self._app()
+        with app.test_client() as client:
+            self._login(client, ROLE_ADMIN)
+            html = client.get("/shopify-stock").get_data(as_text=True)
+        self.assertEqual(html.count("js-change-sku"), 2 + 1)   # two buttons + one script selector
+        self.assertIn(f'data-variant="{ROW["variant_id"]}"', html)
+        self.assertIn(f'data-variant="{MISSING_ROW["variant_id"]}"', html)
+        self.assertNotIn(f'data-variant="{UNSELLABLE_ROW["variant_id"]}"', html)
+        self.assertIn('<dialog id="sku-dialog"', html)
+        self.assertIn('id="shopify-stock-nav-count"', html)
 
 
 if __name__ == "__main__":

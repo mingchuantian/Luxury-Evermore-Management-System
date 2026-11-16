@@ -138,6 +138,7 @@ def _row(variant: Dict[str, Any], *, reason: str, sku: str, local, detail: str =
     product = variant.get("product") or {}
     return {
         "variant_id": variant.get("id") or "",
+        "product_id": product.get("id") or "",
         "sku": sku,
         "reason": reason,
         "detail": detail,

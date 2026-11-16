@@ -14,6 +14,10 @@ excluded. By default, a complete synchronization runs every hour.
    Shopify "available" inventory to 0 at every location. Shopify treats
    `write_products` as implicitly granting product read access and may omit the
    redundant `read_products` entry from the issued token's scope list.
+   The "修改 SKU" button on the Shopify库存更新 page changes a variant's SKU
+   through `productVariantsBulkUpdate`, so it needs `write_products`
+   (`read_products` alone is not enough). After changing scopes, release a new
+   app version and re-approve it on the store.
 3. Release the app configuration and install the app on the store.
 4. Copy the Client ID and Client secret from the app's Settings page.
 

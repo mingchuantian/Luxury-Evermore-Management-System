@@ -70,6 +70,23 @@ query InventoryByVariant($id: ID!) {
 }
 """
 
+QUERY_VARIANTS_BY_SKU = """
+query VariantsBySku($q: String!) {
+  productVariants(first: 10, query: $q) {
+    nodes { id sku product { title } }
+  }
+}
+"""
+
+MUTATION_SET_VARIANT_SKU = """
+mutation SetVariantSku($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+    productVariants { id sku }
+    userErrors { field message }
+  }
+}
+"""
+
 MUTATION_SET_QUANTITIES = """
 mutation ZeroSoldInventory(
   $input: InventorySetQuantitiesInput!,
@@ -299,3 +316,67 @@ def sold_sync_flash(
         f"已售出，但 Shopify 库存未能自动改为 0（{detail}），请到 Shopify 后台手动处理。",
         "error",
     )
+
+
+def set_shopify_variant_sku(
+    product_id: str,
+    variant_id: str,
+    new_sku: str,
+    token_provider: Optional[ShopifyTokenProvider] = None,
+) -> Dict[str, Any]:
+    """Change one Shopify variant's SKU (needs the write_products scope).
+
+    Refuses when another Shopify variant already uses the new SKU, because two
+    listings with one SKU break the hourly sync for that item. Never raises.
+    Returns {"ok": bool, "message": str}.
+    """
+    new_sku = (new_sku or "").strip()
+    if not product_id.startswith("gid://shopify/Product/") or not variant_id.startswith(
+        "gid://shopify/ProductVariant/"
+    ):
+        return {"ok": False, "message": "Invalid Shopify product or variant id."}
+    provider = token_provider or TOKEN_PROVIDER
+    config_error = provider.configuration_error()
+    if config_error:
+        return {"ok": False, "message": config_error}
+    try:
+        escaped = new_sku.replace("\\", "\\\\").replace('"', '\\"')
+        data = shopify_gql(
+            QUERY_VARIANTS_BY_SKU, {"q": f'sku:"{escaped}"'}, token_provider=provider
+        )
+        clash = [
+            node for node in ((data.get("productVariants") or {}).get("nodes") or [])
+            if (node.get("sku") or "").strip() == new_sku and node.get("id") != variant_id
+        ]
+        if clash:
+            title = ((clash[0].get("product") or {}).get("title") or "").strip()
+            return {
+                "ok": False,
+                "code": "duplicate",
+                "message": f"Shopify 上已有其他商品使用 {new_sku}"
+                + (f"（{title}）" if title else "")
+                + "，请先处理那个商品。",
+            }
+
+        data = shopify_gql(
+            MUTATION_SET_VARIANT_SKU,
+            {"productId": product_id,
+             "variants": [{"id": variant_id, "inventoryItem": {"sku": new_sku}}]},
+            token_provider=provider,
+        )
+        payload = data.get("productVariantsBulkUpdate") or {}
+        errors = payload.get("userErrors") or []
+        if errors:
+            raise RuntimeError("; ".join(e.get("message") or "unknown error" for e in errors))
+        updated = {v.get("id"): (v.get("sku") or "").strip()
+                   for v in payload.get("productVariants") or []}
+        if updated.get(variant_id) != new_sku:
+            raise RuntimeError("Shopify did not confirm the new SKU.")
+        logger.info("Shopify variant %s SKU set to %s.", variant_id, new_sku)
+        return {"ok": True, "message": f"Shopify SKU 已改为 {new_sku}。"}
+    except Exception as exc:  # noqa: BLE001
+        text = str(exc)
+        if "ACCESS_DENIED" in text or "write_products" in text:
+            text = "The Shopify app needs the write_products access scope."
+        logger.error("Failed to set SKU of %s: %s", variant_id, text)
+        return {"ok": False, "message": text[:300]}
