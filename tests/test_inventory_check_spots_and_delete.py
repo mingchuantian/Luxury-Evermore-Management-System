@@ -1,0 +1,267 @@
+"""老板间 positions (货架/地面/沙发) and deleting an inventory check."""
+
+import unittest
+from datetime import datetime, timedelta, timezone
+
+from bson import ObjectId
+from flask import Flask
+
+from luxury_app.auth import ROLE_ADMIN, ROLE_MANAGEMENT, ROLE_STAFF
+from luxury_app.constants import OWNERSHIP_MANAGEMENT
+from luxury_app.inventory_scan_history import ROOM_SPOTS, scan_history_for_skus
+from luxury_app.routes.inventory_check import register as register_inventory_check
+from luxury_app.routes.items import register as register_items
+
+T0 = datetime(2026, 11, 10, 10, tzinfo=timezone.utc)
+ADMIN_LAYOUT = (
+    "index", "logout", "login", "analytics", "audit_history", "notes_list",
+    "users_list", "admin_management_payments", "management_index",
+    "management_list_items", "management_item_new_buyin_form",
+    "management_item_new_consignment_form", "sale_new_form",
+)
+
+
+def _scan(sku, at, spot=None):
+    scan = {"sku": sku, "name": f"bag {sku}", "status": "RECEIVED", "scanned_at": at}
+    if spot is not None:
+        scan["spot"] = spot
+    return scan
+
+
+def _session(check_type, scans, status="completed", started=T0):
+    return {
+        "_id": ObjectId(), "status": status, "check_type": check_type,
+        "started_at": started, "completed_at": None if status == "active" else started + timedelta(hours=1),
+        "updated_at": started, "started_by": {"username": "boss"},
+        "scanned_skus": [s["sku"] for s in scans], "scans": scans,
+    }
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        try:
+            import mongomock
+        except ImportError:
+            self.skipTest("mongomock not installed")
+        self.db = mongomock.MongoClient()["t"]
+        self.db.items.insert_many([
+            {"sku": f"BAG{i:03d}", "name": f"bag {i}", "brand": "Chanel", "status": "RECEIVED",
+             "created_at": T0 - timedelta(days=30), "ownership": OWNERSHIP_MANAGEMENT if i == 9 else "admin"}
+            for i in range(1, 10)
+        ])
+        self.sessions = self.db.inventory_check_sessions
+
+    def _app(self):
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters["dt8"] = lambda v: v.strftime("%Y-%m-%d %H:%M") if v else ""
+        for endpoint in ADMIN_LAYOUT:
+            app.add_url_rule(f"/_{endpoint}", endpoint, lambda: "x")
+        register_items(app, self.db.items, inventory_check_sessions=self.sessions)
+        register_inventory_check(app, self.db.items, self.sessions)
+        return app
+
+    def _client(self, role=ROLE_ADMIN, app=None):
+        client = (app or self._app()).test_client()
+        with client.session_transaction() as s:
+            s.update(role=role, user_id=str(ObjectId()), username="boss")
+        return client
+
+
+class RoomSpotTests(Base):
+    def test_scan_records_current_spot(self):
+        room = _session("room", [], status="active")
+        self.sessions.insert_one(room)
+        client = self._client()
+        url = f"/inventory-check/sessions/{room['_id']}/scan"
+        first = client.post(url, json={"sku": "bag001", "spot": "shelf_a"}).json
+        self.assertEqual(first["scan"]["spot"], "shelf_a")
+        client.post(url, json={"sku": "BAG002", "spot": "made_up"})   # unknown spot → none
+        client.post(url, json={"sku": "BAG003"})
+        again = client.post(url, json={"sku": "BAG001", "spot": "sofa"}).json
+        self.assertTrue(again["duplicate"])
+        self.assertEqual(again["scan"]["spot"], "shelf_a")             # keeps where it was found
+        scans = self.sessions.find_one({"_id": room["_id"]})["scans"]
+        self.assertEqual([s.get("spot") for s in scans], ["shelf_a", None, None])
+
+    def test_change_spot_during_and_after_check(self):
+        room = _session("room", [_scan("BAG001", T0, "shelf_a"), _scan("BAG002", T0)])
+        self.sessions.insert_one(room)
+        client = self._client()
+        url = f"/inventory-check/sessions/{room['_id']}/spot"
+        response = client.post(url, json={"sku": "BAG002", "spot": "floor"})
+        self.assertEqual(response.json, {"ok": True, "sku": "BAG002", "spot": "floor", "spot_label": "地面"})
+        client.post(url, json={"sku": "BAG001", "spot": ""})            # back to 未选位置
+        scans = self.sessions.find_one({"_id": room["_id"]})["scans"]
+        self.assertEqual([s.get("spot") for s in scans], ["", "floor"])
+        # Other scan data is untouched.
+        self.assertEqual([s["sku"] for s in scans], ["BAG001", "BAG002"])
+        self.assertEqual(scans[1]["scanned_at"].replace(tzinfo=timezone.utc), T0)
+
+    def test_change_spot_is_validated(self):
+        room = _session("room", [_scan("BAG001", T0)])
+        store = _session("store", [_scan("BAG002", T0)])
+        self.sessions.insert_many([room, store])
+        client = self._client()
+        self.assertEqual(client.post(f"/inventory-check/sessions/{room['_id']}/spot",
+                                     json={"sku": "BAG001", "spot": "roof"}).status_code, 400)
+        self.assertEqual(client.post(f"/inventory-check/sessions/{room['_id']}/spot",
+                                     json={"sku": "BAG009", "spot": "sofa"}).status_code, 404)
+        self.assertEqual(client.post(f"/inventory-check/sessions/{store['_id']}/spot",
+                                     json={"sku": "BAG002", "spot": "sofa"}).status_code, 404)
+        self.assertEqual(client.post("/inventory-check/sessions/nope/spot",
+                                     json={"sku": "BAG001", "spot": "sofa"}).status_code, 404)
+        staff = self._client(ROLE_STAFF)
+        self.assertEqual(staff.post(f"/inventory-check/sessions/{room['_id']}/spot",
+                                    json={"sku": "BAG001", "spot": "sofa"}).status_code, 403)
+
+    def test_active_room_page_has_dropdowns_defaulting_to_last_spot(self):
+        room = _session("room", [_scan("BAG001", T0, "shelf_a"), _scan("BAG002", T0, "shelf_3")],
+                        status="active")
+        self.sessions.insert_one(room)
+        html = self._client().get(f"/inventory-check/sessions/{room['_id']}").get_data(as_text=True)
+        current = html.split('<select id="current-spot">', 1)[1].split("</select>", 1)[0]
+        for _, zh, _ in ROOM_SPOTS:
+            self.assertIn(zh, current)
+        self.assertIn('<option value="shelf_3" selected>货架3</option>', current)
+        self.assertEqual(html.count('class="js-spot spot-row-select" data-sku="BAG'), 2)
+
+    def test_store_page_has_no_spot(self):
+        store = _session("store", [_scan("BAG001", T0)], status="active")
+        self.sessions.insert_one(store)
+        html = self._client().get(f"/inventory-check/sessions/{store['_id']}").get_data(as_text=True)
+        self.assertNotIn('id="current-spot"', html)
+        self.assertNotIn('class="js-spot spot-row-select" data-sku="BAG', html)
+
+    def test_completed_room_page_groups_by_spot(self):
+        room = _session("room", [_scan("BAG001", T0, "shelf_a"), _scan("BAG002", T0, "shelf_a"),
+                                 _scan("BAG003", T0, "sofa"), _scan("BAG004", T0)])
+        self.sessions.insert_one(room)
+        html = self._client().get(f"/inventory-check/sessions/{room['_id']}").get_data(as_text=True)
+        chips = html.split('id="spot-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn("全部 4", chips)
+        self.assertIn('货架A <span data-spot-count="shelf_a">2</span>', chips)
+        self.assertIn('沙发 <span data-spot-count="sofa">1</span>', chips)
+        self.assertIn('未选位置 <span data-spot-count="">1</span>', chips)
+        self.assertNotIn("货架B", chips)
+        self.assertEqual(html.count('<tr data-spot="shelf_a">'), 2)
+        self.assertIn("<th>位置</th>", html)
+
+    def test_history_and_item_pages_show_spot(self):
+        self.sessions.insert_many([
+            _session("store", [_scan("BAG001", T0)]),
+            _session("room", [_scan("BAG001", T0 + timedelta(days=1), "shelf_b"),
+                              _scan("BAG002", T0 + timedelta(days=1))], started=T0 + timedelta(days=1)),
+        ])
+        history = scan_history_for_skus(self.sessions, ["BAG001", "BAG002"])
+        self.assertEqual((history["BAG001"][0]["spot_label"], history["BAG001"][0]["spot_label_en"]),
+                         ("货架B", "Shelf B"))
+        self.assertEqual(history["BAG001"][1]["spot"], "")
+        self.assertEqual(history["BAG002"][0]["spot_label"], "")
+
+        client = self._client()
+        row = client.get("/items").get_data(as_text=True).split("BAG001", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("老板间 · <b>货架B</b>", row)
+        detail = client.get("/items/BAG001").get_data(as_text=True)
+        self.assertIn("2026-11-11 10:00 - 老板间 · <b>货架B</b>", detail)
+        self.assertIn("2026-11-10 10:00 - 店内陈列\n", detail)
+
+    def test_management_sees_spot_in_english(self):
+        from luxury_app.routes.management import register as register_management
+        from luxury_app.routes.sales import register as register_sales
+
+        self.sessions.insert_one(_session("room", [_scan("BAG009", T0, "sofa")]))
+        app = Flask(__name__, template_folder="../templates")
+        app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters["dt8"] = lambda v: v.strftime("%Y-%m-%d %H:%M") if v else ""
+        for endpoint in ("index", "logout", "login", "list_items", "item_new_buyin_form",
+                         "item_new_consignment_form", "analytics", "audit_history",
+                         "notes_list", "users_list"):
+            app.add_url_rule(f"/_{endpoint}", endpoint, lambda: "x")
+        register_management(app, self.db.items, inventory_check_sessions=self.sessions)
+        register_sales(app, self.db.items)
+        client = self._client(ROLE_MANAGEMENT, app=app)
+        listing = client.get("/management/items").get_data(as_text=True)
+        self.assertIn("Back room · <b>Sofa</b>", listing.split("BAG009", 1)[1].split("</tr>", 1)[0])
+        self.assertNotIn("沙发", listing)
+        detail = client.get("/management/items/BAG009").get_data(as_text=True)
+        self.assertIn("Back room · <b>Sofa</b>", detail)
+
+
+class DeleteCheckTests(Base):
+    def test_delete_removes_the_check_and_everything_derived_from_it(self):
+        store = _session("store", [_scan("BAG001", T0)])
+        room = _session("room", [_scan("BAG001", T0 + timedelta(days=1), "shelf_a")],
+                        started=T0 + timedelta(days=1))
+        self.sessions.insert_many([store, room])
+        audit_before = self.db.audit_logs.count_documents({})
+        client = self._client()
+
+        response = client.post(f"/inventory-check/sessions/{room['_id']}/delete", data={"page": "1"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/inventory-check?page=1", response.headers["Location"])
+        self.assertIn("已删除这次盘查记录。", client.get(response.headers["Location"]).get_data(as_text=True))
+        self.assertIsNone(self.sessions.find_one({"_id": room["_id"]}))
+        self.assertIsNotNone(self.sessions.find_one({"_id": store["_id"]}))
+
+        # 盘查记录 on the item: only the store check remains.
+        detail = client.get("/items/BAG001").get_data(as_text=True)
+        section = detail.split("<h3>盘查记录</h3>", 1)[1].split("<h3>操作记录</h3>", 1)[0]
+        self.assertNotIn("老板间", section)
+        self.assertIn("店内陈列", section)
+        # The deleted check's own page and any comparison with it are gone.
+        self.assertEqual(client.get(f"/inventory-check/sessions/{room['_id']}").status_code, 404)
+        self.assertEqual(client.get(
+            f"/inventory-check/compare?store={store['_id']}&room={room['_id']}").status_code, 400)
+        # It is no longer offered for comparison, and nothing is logged about it.
+        history = client.get("/inventory-check").get_data(as_text=True)
+        self.assertNotIn(str(room["_id"]), history)
+        self.assertEqual(self.db.audit_logs.count_documents({}), audit_before)
+
+    def test_deleting_the_only_check_leaves_no_trace(self):
+        room = _session("room", [_scan("BAG001", T0, "sofa")], status="active")
+        self.sessions.insert_one(room)
+        client = self._client()
+        client.post(f"/inventory-check/sessions/{room['_id']}/delete")
+        self.assertEqual(self.sessions.count_documents({}), 0)
+        row = client.get("/items").get_data(as_text=True).split("BAG001", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("无", row)
+        # A scan arriving from a phone still on the deleted check is refused.
+        late = client.post(f"/inventory-check/sessions/{room['_id']}/scan", json={"sku": "BAG002"})
+        self.assertEqual(late.status_code, 404)
+        self.assertEqual(self.sessions.count_documents({}), 0)
+
+    def test_history_has_delete_button_with_confirmation(self):
+        room = _session("room", [_scan("BAG001", T0)])
+        self.sessions.insert_one(room)
+        html = self._client().get("/inventory-check").get_data(as_text=True)
+        form = html.split(f'action="/inventory-check/sessions/{room["_id"]}/delete"', 1)[1].split("</form>", 1)[0]
+        self.assertIn('onsubmit="return confirm(this.dataset.confirm);"', form)
+        self.assertIn("确认删除这次老板间盘查", form)
+        self.assertIn("无法恢复", form)
+        self.assertIn(">删除</button>", form)
+
+    def test_only_admin_and_bad_ids(self):
+        room = _session("room", [_scan("BAG001", T0)])
+        self.sessions.insert_one(room)
+        staff = self._client(ROLE_STAFF)
+        self.assertEqual(staff.post(f"/inventory-check/sessions/{room['_id']}/delete").status_code, 403)
+        self.assertEqual(self.sessions.count_documents({}), 1)
+        client = self._client()
+        for bad in ("nope", str(ObjectId())):
+            response = client.post(f"/inventory-check/sessions/{bad}/delete", data={"page": "abc"})
+            self.assertEqual(response.status_code, 302)
+            self.assertIn("page=1", response.headers["Location"])
+        self.assertEqual(self.sessions.count_documents({}), 1)
+        self.assertIn("不存在或已被删除", client.get("/inventory-check").get_data(as_text=True))
+
+    def test_page_past_the_end_after_deleting_shows_last_page(self):
+        self.sessions.insert_many([
+            _session("store", [], started=T0 + timedelta(minutes=i)) for i in range(21)
+        ])
+        html = self._client().get("/inventory-check?page=3").get_data(as_text=True)
+        self.assertIn("第 2 / 2 页", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

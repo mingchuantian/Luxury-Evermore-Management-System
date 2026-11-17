@@ -12,6 +12,23 @@ from typing import Any, Dict, Iterable, List
 LOCATION_LABELS = {"store": "店内陈列", "room": "老板间"}
 LEGACY_LABEL = "旧盘查（未分地点）"
 
+# Where in the back room a bag sits. Only the key is stored on the scan
+# (scans[].spot); labels are for display. Order = dropdown order.
+ROOM_SPOTS = (
+    ("shelf_a", "货架A", "Shelf A"),
+    ("shelf_b", "货架B", "Shelf B"),
+    ("shelf_c", "货架C", "Shelf C"),
+    ("shelf_1", "货架1", "Shelf 1"),
+    ("shelf_2", "货架2", "Shelf 2"),
+    ("shelf_3", "货架3", "Shelf 3"),
+    ("shelf_4", "货架4", "Shelf 4"),
+    ("shelf_5", "货架5", "Shelf 5"),
+    ("floor", "地面", "Floor"),
+    ("sofa", "沙发", "Sofa"),
+)
+SPOT_ZH = {key: zh for key, zh, _ in ROOM_SPOTS}
+SPOT_EN = {key: en for key, _, en in ROOM_SPOTS}
+
 
 def _aware(value):
     if isinstance(value, datetime) and value.tzinfo is None:
@@ -22,8 +39,10 @@ def _aware(value):
 def scan_history_for_skus(sessions, skus: Iterable[str]) -> Dict[str, List[Dict[str, Any]]]:
     """Return {sku: [record, ...]} newest first. Missing SKUs have no key.
 
-    record = {"at", "location", "location_key", "session_id", "active"}
+    record = {"at", "location", "location_key", "spot", "spot_label",
+              "spot_label_en", "session_id", "active"}
     location is the Chinese label; location_key is "store" / "room" / "legacy".
+    spot is the back-room position key ("" when not recorded).
     """
     wanted = {sku for sku in skus if sku}
     if sessions is None or not wanted:
@@ -43,10 +62,14 @@ def scan_history_for_skus(sessions, skus: Iterable[str]) -> Dict[str, List[Dict[
             if sku not in wanted or sku in seen_in_session:
                 continue
             seen_in_session.add(sku)
+            spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
             history.setdefault(sku, []).append({
                 "at": _aware(scan.get("scanned_at")) or fallback,
                 "location": location,
                 "location_key": location_key,
+                "spot": spot,
+                "spot_label": SPOT_ZH.get(spot, ""),
+                "spot_label_en": SPOT_EN.get(spot, ""),
                 "session_id": str(check.get("_id")),
                 "active": check.get("status") == "active",
             })

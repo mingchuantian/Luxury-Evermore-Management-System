@@ -299,7 +299,7 @@
 <ul>
   {% for r in scan_records %}
     <li class="muted">
-      {{ r.at|dt8 if r.at else "-" }} - {{ r.location }}{% if r.active %}（盘查进行中）{% endif %}
+      {{ r.at|dt8 if r.at else "-" }} - {{ r.location }}{% if r.spot_label %} · <b>{{ r.spot_label }}</b>{% endif %}{% if r.active %}（盘查进行中）{% endif %}
       - <a href="{{ url_for('inventory_check_session', session_id=r.session_id) }}" target="_blank" rel="noopener noreferrer">查看该次盘查</a>
     </li>
   {% endfor %}

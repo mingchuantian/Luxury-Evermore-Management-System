@@ -1,6 +1,13 @@
 {% extends "layout.html" %}
 {% block content %}
 {% set active = check_session.status == "active" %}
+{% macro spot_select(sku, spot) -%}
+  <select class="js-spot spot-row-select" data-sku="{{ sku }}" aria-label="{{ sku }} 的位置">
+    <option value="" {{ "selected" if not spot }}>未选位置</option>
+    {% for key, zh, en in ROOM_SPOTS %}<option value="{{ key }}" {{ "selected" if spot == key }}>{{ zh }}</option>{% endfor %}
+  </select>
+  <span class="spot-saved" aria-live="polite"></span>
+{%- endmacro %}
 <style>
   .stocktake-page { max-width:760px; margin:0 auto; }
   .stocktake-top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
@@ -27,8 +34,21 @@
   .scan-list li { padding:9px 0; border-bottom:1px solid var(--border); }
   .missing-count { font-size:18px; }
   .status-RECEIVED { color:#28623b; }
+  /* 老板间：位置 */
+  .spot-current { display:flex; gap:10px; align-items:center; margin:12px 0 4px; padding:12px 14px; background:#f5effc; border:2px solid #7e22ce; border-radius:8px; }
+  .spot-current label { margin:0; font-size:17px; font-weight:700; color:#5b168f; white-space:nowrap; }
+  .spot-current select { font-size:18px; font-weight:700; min-height:44px; flex:1; }
+  .spot-row-select { width:auto; min-width:104px; padding:3px 6px; display:inline-block; }
+  .spot-saved { font-size:12px; color:#28623b; margin-left:4px; }
+  .spot-saved.bad { color:#b00020; }
+  .spot-chips { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 12px; }
+  .spot-chip { padding:4px 10px; border:1px solid var(--border-strong); border-radius:14px; background:#fff; cursor:pointer; font:inherit; font-size:14px; }
+  .spot-chip.active { background:#5b168f; border-color:#5b168f; color:#fff; }
+  .spot-chip.empty { color:#8a6100; }
   @media (max-width:720px) {
     .stocktake-page { width:100%; }
+    .spot-current { flex-direction:column; align-items:stretch; }
+    .spot-row-select { min-height:36px !important; font-size:15px !important; width:auto !important; }
     .stocktake-top { flex-direction:column; }
     .stocktake-camera { min-height:250px; }
     .stocktake-feedback { padding:15px; }
@@ -49,6 +69,16 @@
   {% if active %}
     <p class="muted">摄像头会持续识别；每个 SKU 在本次 Session 中只记录一次。识别成功后会发出提示音并震动，可立即扫描下一个。</p>
     {% if is_store %}<p class="muted">店内陈列盘查：已在 Shopify 上的商品显示绿色；<span class="not-on-website">未上 website 的商品会红框提醒</span>，并在结果中列出。</p>{% endif %}
+    {% if is_room %}
+    <div class="spot-current">
+      <label for="current-spot">当前位置</label>
+      <select id="current-spot">
+        <option value="" {{ "selected" if not last_spot }}>未选位置</option>
+        {% for key, zh, en in ROOM_SPOTS %}<option value="{{ key }}" {{ "selected" if last_spot == key }}>{{ zh }}</option>{% endfor %}
+      </select>
+    </div>
+    <p class="muted" style="margin-top:4px;">扫到的包会记在当前位置。换到下一个货架时先改这里；扫完后也可以在下面的记录里逐条修改。</p>
+    {% endif %}
     <div class="stocktake-camera"><div id="stocktake-reader"></div></div>
     <div class="stocktake-controls">
       <button class="btn" id="start-camera" type="button">开启后置摄像头</button>
@@ -70,7 +100,7 @@
     </div>
     <ul class="scan-list" id="scan-list">
       {% for scan in (check_session.scans or [])|reverse %}
-        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span>{% if is_store %} · {% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}{% endif %}</li>
+        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span>{% if is_store %} · {% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}{% endif %}{% if is_room %} · {{ spot_select(scan.sku, scan.spot) }}{% endif %}</li>
       {% else %}
         <li class="muted" id="empty-scan-row">尚无扫描记录</li>
       {% endfor %}
@@ -85,6 +115,19 @@
       <p>本次共扫描：<strong>{{ check_session.scanned_skus|length }}</strong> 件</p>
       {% if is_store %}<p class="missing-count">其中未上 website：<strong class="not-on-website">{{ not_on_website|length }}</strong> 件</p>{% endif %}
     </div>
+
+    {% if is_room and check_session.scans %}
+      <h3>按位置查看</h3>
+      <div class="spot-chips" id="spot-chips">
+        <button type="button" class="spot-chip active" data-spot="*">全部 {{ check_session.scans|length }}</button>
+        {% for key, zh, en in ROOM_SPOTS %}{% if spot_counts.get(key) %}
+          <button type="button" class="spot-chip" data-spot="{{ key }}">{{ zh }} <span data-spot-count="{{ key }}">{{ spot_counts[key] }}</span></button>
+        {% endif %}{% endfor %}
+        {% if spot_counts.get("") %}
+          <button type="button" class="spot-chip empty" data-spot="">未选位置 <span data-spot-count="">{{ spot_counts[""] }}</span></button>
+        {% endif %}
+      </div>
+    {% endif %}
 
     {% if is_store %}
       <h3>店内陈列但未上 website 的商品</h3>
@@ -107,10 +150,10 @@
 
     <h3>本次全部扫描记录</h3>
     <table>
-      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th>{% if is_store %}<th>Shopify</th>{% endif %}</tr></thead>
-      <tbody>
+      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th>{% if is_store %}<th>Shopify</th>{% endif %}{% if is_room %}<th>位置</th>{% endif %}</tr></thead>
+      <tbody id="scan-table">
         {% for scan in (check_session.scans or [])|reverse %}
-        <tr><td>{{ scan.scanned_at|dt8 }}</td><td><b>{{ scan.sku }}</b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td>{% if is_store %}<td>{% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}</td>{% endif %}</tr>
+        <tr data-spot="{{ scan.spot if scan.spot in SPOT_ZH else '' }}"><td>{{ scan.scanned_at|dt8 }}</td><td><b><a href="{{ url_for('item_detail', item_key=scan.sku) }}" target="_blank" rel="noopener noreferrer">{{ scan.sku }}</a></b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td>{% if is_store %}<td>{% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}</td>{% endif %}{% if is_room %}<td>{{ spot_select(scan.sku, scan.spot) }}</td>{% endif %}</tr>
         {% else %}
         <tr><td colspan="5">没有扫描记录</td></tr>
         {% endfor %}
@@ -152,6 +195,76 @@
   {% endif %}
 </div>
 
+{% if is_room %}
+<script>
+(() => {
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const spotUrl = {{ url_for('inventory_check_set_spot', session_id=check_session._id|string)|tojson }};
+
+  const SPOT_NAMES = Object.fromEntries({{ ROOM_SPOTS|tojson }}.map(s => [s[0], s[1]]));
+
+  function bump(spot, delta) {
+    let el = document.querySelector(`[data-spot-count="${CSS.escape(spot)}"]`);
+    const chips = document.getElementById("spot-chips");
+    if (!el && chips && delta > 0) {
+      // First bag moved to a spot that had none: add its chip.
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "spot-chip" + (spot ? "" : " empty");
+      chip.dataset.spot = spot;
+      chip.append((SPOT_NAMES[spot] || "未选位置") + " ");
+      el = document.createElement("span");
+      el.dataset.spotCount = spot;
+      el.textContent = "0";
+      chip.appendChild(el);
+      chips.appendChild(chip);
+    }
+    if (el) el.textContent = String(Math.max(0, parseInt(el.textContent, 10) + delta));
+  }
+
+  // Change one bag's spot (during or after the check). Saved right away.
+  document.addEventListener("change", async event => {
+    const select = event.target.closest("select.js-spot");
+    if (!select) return;
+    const saved = select.nextElementSibling;
+    const before = select.dataset.saved ?? select.querySelector("option[selected]")?.value ?? "";
+    saved.className = "spot-saved"; saved.textContent = "保存中…";
+    select.disabled = true;
+    try {
+      const response = await fetch(spotUrl, {
+        method: "POST",
+        headers: {"Accept": "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf},
+        body: JSON.stringify({sku: select.dataset.sku, spot: select.value}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "保存失败");
+      select.dataset.saved = select.value;
+      saved.textContent = "✓ 已保存";
+      setTimeout(() => { if (saved.textContent === "✓ 已保存") saved.textContent = ""; }, 1500);
+      const row = select.closest("tr[data-spot]");
+      if (row) { bump(row.dataset.spot, -1); bump(select.value, 1); row.dataset.spot = select.value; }
+    } catch (error) {
+      select.value = before;
+      saved.className = "spot-saved bad"; saved.textContent = error.message || "保存失败";
+    } finally {
+      select.disabled = false;
+    }
+  });
+
+  // 按位置查看
+  const chips = document.getElementById("spot-chips");
+  chips?.addEventListener("click", event => {
+    const chip = event.target.closest(".spot-chip");
+    if (!chip) return;
+    chips.querySelectorAll(".spot-chip").forEach(c => c.classList.toggle("active", c === chip));
+    document.querySelectorAll("#scan-table tr[data-spot]").forEach(row => {
+      row.style.display = chip.dataset.spot === "*" || row.dataset.spot === chip.dataset.spot ? "" : "none";
+    });
+  });
+})();
+</script>
+{% endif %}
+
 {% if active %}
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
@@ -168,6 +281,19 @@
   const manualForm = document.getElementById("manual-form");
   const manualValue = document.getElementById("manual-value");
   const seen = new Set({{ (check_session.scanned_skus or [])|tojson }});
+  const isRoomCheck = {{ is_room|tojson }};
+  const spotSelect = document.getElementById("current-spot");
+  const SPOTS = {{ ROOM_SPOTS|tojson }};
+  const spotName = key => (SPOTS.find(s => s[0] === key) || [null, "未选位置"])[1];
+  function spotOf(sku) {
+    const row = scanList.querySelector(`li[data-sku="${CSS.escape(sku)}"] select.js-spot`);
+    return row ? row.value : "";
+  }
+  function spotSelectHtml(sku, spot) {
+    const options = [["", "未选位置"], ...SPOTS.map(s => [s[0], s[1]])]
+      .map(([key, label]) => `<option value="${escapeHtml(key)}"${key === spot ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    return `<select class="js-spot spot-row-select" data-sku="${escapeHtml(sku)}" aria-label="${escapeHtml(sku)} 的位置">${options}</select><span class="spot-saved" aria-live="polite"></span>`;
+  }
   let scanner = null;
   let cameraRunning = false;
   let requestBusy = false;
@@ -231,7 +357,8 @@
     const website = !isStoreCheck ? "" : (shopifyLinked
       ? ` · <span class="on-website">已在 Shopify</span>`
       : ` · <span class="not-on-website">未上website</span>`);
-    row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>${website}`;
+    const spot = isRoomCheck ? ` · ${spotSelectHtml(scan.sku, scan.spot || "")}` : "";
+    row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>${website}${spot}`;
     scanList.prepend(row);
     scanCount.textContent = `${count} 件`;
   }
@@ -242,7 +369,8 @@
     lastDecodedSku = sku;
     lastDecodedAt = time;
     if (seen.has(sku)) {
-      show("duplicate", "已扫描过，本次不重复记录", sku, "请继续扫描下一件商品。");
+      show("duplicate", "已扫描过，本次不重复记录", sku,
+        isRoomCheck ? `记录的位置：${spotName(spotOf(sku))}（可在下方记录里修改）` : "请继续扫描下一件商品。");
       if (navigator.vibrate) navigator.vibrate(45);
       return;
     }
@@ -254,7 +382,7 @@
         method: "POST",
         cache: "no-store",
         headers: {"Accept":"application/json", "Content-Type":"application/json", "X-CSRF-Token":csrf},
-        body: JSON.stringify({sku})
+        body: JSON.stringify(isRoomCheck ? {sku, spot: spotSelect.value} : {sku})
       });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.message || "记录失败");
@@ -263,7 +391,8 @@
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
       } else if (result.duplicate) {
         seen.add(sku);
-        show("duplicate", "已扫描过，本次不重复记录", sku, "请继续扫描下一件商品。");
+        show("duplicate", "已扫描过，本次不重复记录", sku,
+          isRoomCheck ? `记录的位置：${spotName(result.scan.spot || "")}（可在下方记录里修改）` : "请继续扫描下一件商品。");
       } else {
         seen.add(sku);
         addScan(result.scan, result.scan_count, result.shopify_linked);
@@ -275,7 +404,9 @@
           beep(); setTimeout(beep, 180); setTimeout(beep, 360);
           if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
         } else {
-          show("success", isStoreCheck ? "✓ 扫描成功 · 已在 Shopify 上" : "✓ 扫描成功", sku, detail);
+          const title = isStoreCheck ? "✓ 扫描成功 · 已在 Shopify 上"
+            : isRoomCheck ? `✓ 扫描成功 · ${spotName(result.scan.spot || "")}` : "✓ 扫描成功";
+          show("success", title, sku, detail);
           beep();
           if (navigator.vibrate) navigator.vibrate(80);
         }

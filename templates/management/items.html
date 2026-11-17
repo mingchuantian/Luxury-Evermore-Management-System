@@ -57,7 +57,7 @@
     <td class="muted">
       {% if last_scan %}
         {{ last_scan.at|dt8 if last_scan.at else "-" }}
-        <div>{{ SCAN_LOCATION_EN.get(last_scan.location_key, last_scan.location_key) }}{% if last_scan.active %} (check in progress){% endif %}</div>
+        <div>{{ SCAN_LOCATION_EN.get(last_scan.location_key, last_scan.location_key) }}{% if last_scan.spot_label_en %} · <b>{{ last_scan.spot_label_en }}</b>{% endif %}{% if last_scan.active %} (check in progress){% endif %}</div>
       {% else %}
         None
       {% endif %}

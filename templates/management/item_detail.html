@@ -39,7 +39,7 @@
 {% if scan_records %}
 <ul>
   {% for r in scan_records %}
-    <li class="muted">{{ r.at|dt8 if r.at else "-" }} - {{ SCAN_LOCATION_EN.get(r.location_key, r.location_key) }}{% if r.active %} (check in progress){% endif %}</li>
+    <li class="muted">{{ r.at|dt8 if r.at else "-" }} - {{ SCAN_LOCATION_EN.get(r.location_key, r.location_key) }}{% if r.spot_label_en %} · <b>{{ r.spot_label_en }}</b>{% endif %}{% if r.active %} (check in progress){% endif %}</li>
   {% endfor %}
 </ul>
 {% else %}

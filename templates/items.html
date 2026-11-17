@@ -155,7 +155,7 @@
       <td class="muted">
         {% if last_scan %}
           {{ last_scan.at|dt8 if last_scan.at else "-" }}
-          <div>{{ last_scan.location }}{% if last_scan.active %}（盘查进行中）{% endif %}</div>
+          <div>{{ last_scan.location }}{% if last_scan.spot_label %} · <b>{{ last_scan.spot_label }}</b>{% endif %}{% if last_scan.active %}（盘查进行中）{% endif %}</div>
         {% else %}
           无
         {% endif %}

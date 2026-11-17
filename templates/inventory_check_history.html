@@ -13,6 +13,10 @@
   .check-compare { margin:18px 0; padding:14px; background:#fff; border:1px solid var(--border); border-radius:8px; }
   .check-compare .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
   .check-compare select { min-width:240px; }
+  .check-actions { white-space:nowrap; }
+  .check-actions form { display:inline; margin-left:10px; }
+  .check-delete { padding:3px 10px; color:#b00020; background:#fff; border:1px solid #da9696; border-radius:4px; cursor:pointer; font:inherit; font-size:13px; }
+  .check-delete:hover { background:#fff5f5; }
   @media (max-width:720px) {
     .check-heading { align-items:flex-start; flex-direction:column; }
     .check-heading form, .check-heading button { width:100%; }
@@ -102,7 +106,16 @@
           <span class="check-active">进行中</span>
         {% endif %}
       </td>
-      <td><a href="{{ url_for('inventory_check_session', session_id=check._id|string) }}">{{ "查看结果" if check.status == "completed" else "继续盘查" }}</a></td>
+      <td class="check-actions">
+        <a href="{{ url_for('inventory_check_session', session_id=check._id|string) }}">{{ "查看结果" if check.status == "completed" else "继续盘查" }}</a>
+        <form method="post" action="{{ url_for('inventory_check_delete', session_id=check._id|string) }}"
+              data-confirm="确认删除这次{{ check_type_label(check) }}（{{ check.started_at|dt8 }}，已扫描 {{ check.scanned_skus|length }} 件）？&#10;&#10;删除后，这次盘查的所有扫描记录、各商品“盘查记录”里对应的这一条、以及用它做的对比都会一起消失，无法恢复。"
+              onsubmit="return confirm(this.dataset.confirm);">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <input type="hidden" name="page" value="{{ page }}">
+          <button class="check-delete" type="submit">删除</button>
+        </form>
+      </td>
     </tr>
     {% endfor %}
   </tbody>

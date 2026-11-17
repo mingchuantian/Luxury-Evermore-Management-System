@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from math import ceil
 
 from bson import ObjectId
-from flask import abort, jsonify, redirect, render_template, request, session, url_for
+from flask import abort, flash, jsonify, redirect, render_template, request, session, url_for
 
 from models import now
 
 from ..auth import ROLE_ADMIN, require_roles
+from ..inventory_scan_history import ROOM_SPOTS, SPOT_ZH
 
 
 SKU_RE = re.compile(r"^[A-Z0-9_-]{2,64}$")
@@ -55,6 +56,8 @@ def check_type_label(check_session):
 
 def register(app, items, inventory_check_sessions):
     app.jinja_env.globals.setdefault("check_type_label", check_type_label)
+    app.jinja_env.globals.setdefault("ROOM_SPOTS", ROOM_SPOTS)
+    app.jinja_env.globals.setdefault("SPOT_ZH", SPOT_ZH)
 
     def _current_items(skus, fields):
         """Live item data for the given SKUs (read-only)."""
@@ -75,6 +78,7 @@ def register(app, items, inventory_check_sessions):
             page = 1
 
         total = inventory_check_sessions.count_documents({})
+        page = min(page, max(1, ceil(total / PAGE_SIZE)))
         cursor = (
             inventory_check_sessions.find({})
             .sort("started_at", -1)
@@ -148,10 +152,23 @@ def register(app, items, inventory_check_sessions):
                 if doc and not is_linked:
                     not_on_website.append(_item_summary(doc, scan.get("scanned_at")))
 
+        # Back-room checks: how many bags were found at each spot.
+        is_room = check_session.get("check_type") == CHECK_ROOM
+        spot_counts = {}
+        last_spot = ""
+        if is_room:
+            for scan in check_session.get("scans") or []:
+                spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
+                spot_counts[spot] = spot_counts.get(spot, 0) + 1
+                last_spot = spot or last_spot
+
         return render_template(
             "inventory_check_session.html",
             check_session=check_session,
             is_store=check_session.get("check_type") == CHECK_STORE,
+            is_room=is_room,
+            spot_counts=spot_counts,
+            last_spot=last_spot,
             linked=linked,
             not_on_website=not_on_website,
         )
@@ -165,6 +182,9 @@ def register(app, items, inventory_check_sessions):
 
         body = request.get_json(silent=True) or request.form
         sku = (body.get("sku") or "").strip().upper()
+        spot = (body.get("spot") or "").strip()
+        if spot and spot not in SPOT_ZH:
+            spot = ""
         if not SKU_RE.fullmatch(sku):
             return jsonify({
                 "ok": False,
@@ -197,6 +217,9 @@ def register(app, items, inventory_check_sessions):
         shopify_linked = item.get("shopify_sku_exist") is True
         scanned_at = now()
         scan = _item_summary(item, scanned_at=scanned_at)
+        if spot:
+            # Only back-room checks send a spot; the scan keeps its position.
+            scan["spot"] = spot
         update = inventory_check_sessions.update_one(
             {
                 "_id": oid,
@@ -223,7 +246,7 @@ def register(app, items, inventory_check_sessions):
             })
 
         check_session = inventory_check_sessions.find_one(
-            {"_id": oid}, {"status": 1, "scanned_skus": 1}
+            {"_id": oid}, {"status": 1, "scanned_skus": 1, "scans": 1}
         )
         if not check_session:
             return jsonify({"ok": False, "error": "not_found"}), 404
@@ -233,6 +256,10 @@ def register(app, items, inventory_check_sessions):
                 "error": "completed",
                 "message": "This inventory check has already ended.",
             }), 409
+        earlier = next(
+            (s for s in check_session.get("scans") or [] if s.get("sku") == sku), {}
+        )
+        scan["spot"] = earlier.get("spot") or ""
         return jsonify({
             "ok": True,
             "found": True,
@@ -307,6 +334,45 @@ def register(app, items, inventory_check_sessions):
         return redirect(url_for(
             "inventory_check_session", session_id=session_id
         ))
+
+    @app.post("/inventory-check/sessions/<session_id>/spot")
+    @require_roles(ROLE_ADMIN)
+    def inventory_check_set_spot(session_id):
+        """Change where one scanned bag sits in the back room (during or after the check)."""
+        oid = _session_id(session_id)
+        body = request.get_json(silent=True) or request.form
+        sku = (body.get("sku") or "").strip().upper()
+        spot = (body.get("spot") or "").strip()
+        if spot and spot not in SPOT_ZH:
+            return jsonify({"ok": False, "message": "无效的位置"}), 400
+        if not oid or not SKU_RE.fullmatch(sku):
+            return jsonify({"ok": False, "message": "找不到这条扫描记录"}), 404
+        update = inventory_check_sessions.update_one(
+            {"_id": oid, "check_type": CHECK_ROOM, "scans.sku": sku},
+            {"$set": {"scans.$.spot": spot}},
+        )
+        if not update.matched_count:
+            return jsonify({"ok": False, "message": "找不到这条扫描记录"}), 404
+        return jsonify({"ok": True, "sku": sku, "spot": spot, "spot_label": SPOT_ZH.get(spot, "")})
+
+    @app.post("/inventory-check/sessions/<session_id>/delete")
+    @require_roles(ROLE_ADMIN)
+    def inventory_check_delete(session_id):
+        """Remove a check entirely, as if it never happened.
+
+        Everything derived from a check (盘查记录 on items, the comparison,
+        the not-on-website list) is computed live from this one document, so
+        deleting it removes all of that too. No audit entry is written.
+        """
+        oid = _session_id(session_id)
+        page = request.form.get("page") or "1"
+        page = int(page) if page.isdigit() and int(page) > 0 else 1
+        deleted = inventory_check_sessions.delete_one({"_id": oid}).deleted_count if oid else 0
+        if deleted:
+            flash("已删除这次盘查记录。", "ok")
+        else:
+            flash("这次盘查记录不存在或已被删除。", "error")
+        return redirect(url_for("inventory_check_history", page=page))
 
     @app.get("/inventory-check/compare")
     @require_roles(ROLE_ADMIN)
