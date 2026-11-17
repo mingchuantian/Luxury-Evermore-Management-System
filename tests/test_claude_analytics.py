@@ -293,11 +293,10 @@ class StockValueTests(unittest.TestCase):
 
     def test_month_end_value_follows_dashboard_rule(self):
         v = report(self._docs())["stock_value"]
-        self.assertEqual(len(v["months"]), 12)
-        self.assertEqual(v["months"][-4:], ["2026-08", "2026-09", "2026-10", "2026-11"])
-        self.assertEqual(v["value"][-4:], [1000, 4000, 2000, 3300])
-        self.assertEqual(v["count"][-4:], [1, 3, 2, 6])
-        self.assertEqual(v["value"][:-4], [0] * 8)
+        # Starts at the first item's month (Aug 2026), whatever the period filter.
+        self.assertEqual(v["months"], ["2026-08", "2026-09", "2026-10", "2026-11"])
+        self.assertEqual(v["value"], [1000, 4000, 2000, 3300])
+        self.assertEqual(v["count"], [1, 3, 2, 6])
         self.assertEqual((v["now_value"], v["now_count"]), (3300, 6))
         self.assertEqual(v["vs_last_month"]["diff"], 1300)
         self.assertAlmostEqual(v["vs_last_month"]["pct"], 0.65)
@@ -318,11 +317,19 @@ class StockValueTests(unittest.TestCase):
         dashboard = _inventory_value_totals(db.items)["unsold"]
         self.assertEqual(report(list(db.items.find({})))["stock_value"]["now_value"], dashboard)
 
-    def test_span_follows_period(self):
-        docs = [item("A", bought=400, cost=5300, ccy="RMB")]
-        self.assertEqual(len(report(docs, months=24)["stock_value"]["months"]), 24)
-        self.assertEqual(len(report(docs, months=0)["stock_value"]["months"]), 24)
-        self.assertEqual(report(docs)["stock_value"]["value"], [5300] * 12)   # not converted
+    def test_shows_whole_history(self):
+        docs = [item("A", bought=1200, cost=5300, ccy="RMB"), item("B", bought=10, cost=100)]
+        v = report(docs, months=3)["stock_value"]
+        self.assertEqual(v["months"][0], "2023-08")             # 1200 days before 16 Nov 2026
+        self.assertEqual(v["months"][-1], "2026-11")
+        self.assertEqual(len(v["months"]), 40)
+        self.assertEqual(v["value"][:-1], [5300] * 39)          # not converted
+        self.assertEqual(v["value"][-1], 5400)
+        self.assertEqual(v["vs_last_year"]["base"], 5300)
+        # A broken date can't produce an endless chart.
+        bad = report([item("X", purchase_at=datetime(1970, 1, 1, tzinfo=timezone.utc))])["stock_value"]
+        self.assertEqual(len(bad["months"]), 240)
+        self.assertEqual(report([])["stock_value"]["months"], ["2026-11"])
 
 
 class ReadOnlyItems:

@@ -60,6 +60,10 @@
   .ca-pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px; background: #eef0f2; color: var(--ca-ink-2); }
   .ca-q-ok { color: var(--ca-good); font-weight: 600; } .ca-q-bad { color: var(--ca-bad); font-weight: 600; }
   .ca-meter { height: 6px; border-radius: 3px; background: #dbe8f8; min-width: 80px; }
+  .ca-range { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 2px 0 8px; }
+  .ca-range button { font: inherit; font-size: 13px; padding: 4px 12px; border: 0; background: #fff; color: var(--ca-ink-2); cursor: pointer; }
+  .ca-range button + button { border-left: 1px solid var(--border); }
+  .ca-range button[aria-pressed="true"] { background: #1f2325; color: #fff; }
   .ca-meter i { display: block; height: 6px; border-radius: 3px; background: var(--ca-s1); }
 </style>
 
@@ -408,7 +412,7 @@
   {# ------------------------------------------------------------ 12 unsold stock value #}
   <section class="ca-card" id="ca-12">
     {% set v = r.stock_value %}
-    <h3><span class="ca-num">12</span>未售出商品总值 · 每月回顾 <span class="ca-pill">最近 {{ v.months|length }} 个月 · 每月月底</span></h3>
+    <h3><span class="ca-num">12</span>未售出商品总值 · 每月回顾 <span class="ca-pill">{{ v.months[0] }} 至今 · 每月月底</span></h3>
     <p class="ca-how"><b>怎么看：</b>就是仪表盘上的“未售出商品总价值”，往回看每个月月底是多少。算法和仪表盘一样：所有<b>收货</b>（不含寄卖）、当时还没卖出的商品（已录入、护理中、已到货、上架、预留等），把成本加起来。
       最后一根柱子是今天，和仪表盘上的数字一样。</p>
     <div class="ca-tiles">
@@ -423,7 +427,14 @@
       {% endfor %}
     </div>
     <div class="ca-sub">每月月底的未售出商品总价值</div>
-    <p class="ca-cap">鼠标移到柱子上能看到当时有几件。</p>
+    <p class="ca-cap">从系统里最早的一件收货开始，一直到今天。鼠标移到柱子上能看到当时有几件；不受上面“时间范围”影响。</p>
+    {% if v.months|length > 12 %}
+    <div class="ca-range" role="group" aria-label="显示多长时间">
+      <button type="button" data-range="0" aria-pressed="true">全部（{{ v.months|length }} 个月）</button>
+      {% if v.months|length > 24 %}<button type="button" data-range="24" aria-pressed="false">近 24 个月</button>{% endif %}
+      <button type="button" data-range="12" aria-pressed="false">近 12 个月</button>
+    </div>
+    {% endif %}
     <div class="ca-chart" style="height:300px;"><canvas id="c-stock"></canvas></div>
     <p class="ca-note">
       说明：和仪表盘一样，成本按录入时的数字直接相加，不换算币种；不受上面“商品归属 / 显示币种 / 汇率”筛选影响。
@@ -652,21 +663,36 @@
 
   {% set v = r.stock_value %}
   (() => {
-    const labels = {{ v.months|tojson }}.map((m, i, all) => i === all.length - 1 ? m + "（今天）" : m);
-    const counts = {{ v.count|tojson }};
+    const allLabels = {{ v.months|tojson }}.map((m, i, all) => i === all.length - 1 ? m + "（今天）" : m);
+    const allValues = {{ v.value|tojson }};
+    const allCounts = {{ v.count|tojson }};
+    let counts = allCounts;
     const tip = tooltip("");
     tip.callbacks.label = c => ` ${fmt(c.parsed.y)}`;
     tip.callbacks.footer = items => `${counts[items[0].dataIndex]} 件`;
-    new Chart(document.getElementById("c-stock"), {
+    const LABEL_LIMIT = 24;   // more bars than this: numbers on top get crowded, use the tooltip
+    const chart = new Chart(document.getElementById("c-stock"), {
       type: "bar",
-      data: {labels, datasets: [{label: "未售出商品总价值", data: {{ v.value|tojson }}, backgroundColor: S1, hoverBackgroundColor: "#1c5cab",
+      data: {labels: allLabels, datasets: [{label: "未售出商品总价值", data: allValues, backgroundColor: S1, hoverBackgroundColor: "#1c5cab",
         borderRadius: 4, maxBarThickness: 28, categoryPercentage: 0.72}]},
       options: {
         maintainAspectRatio: false, layout: {padding: {top: 22}},
-        scales: {x: noGrid(), y: scale({beginAtZero: true, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}})},
-        plugins: {legend: {display: false}, tooltip: tip, tipLabels: {show: true, skipZero: true}},
+        scales: {x: noGrid({ticks: {color: INK2, padding: 6, autoSkip: true, maxRotation: 45}}),
+                 y: scale({beginAtZero: true, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}})},
+        plugins: {legend: {display: false}, tooltip: tip,
+                  tipLabels: {show: allValues.length <= LABEL_LIMIT, skipZero: true}},
       },
     });
+    document.querySelectorAll("#ca-12 .ca-range button").forEach(button => button.addEventListener("click", () => {
+      const n = Number(button.dataset.range);
+      const from = n ? Math.max(0, allValues.length - n) : 0;
+      document.querySelectorAll("#ca-12 .ca-range button").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
+      counts = allCounts.slice(from);
+      chart.data.labels = allLabels.slice(from);
+      chart.data.datasets[0].data = allValues.slice(from);
+      chart.options.plugins.tipLabels.show = chart.data.labels.length <= LABEL_LIMIT;
+      chart.update();
+    }));
   })();
 })();
 </script>

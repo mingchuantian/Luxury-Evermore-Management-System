@@ -374,7 +374,7 @@ def build_report(docs: Iterable[Dict[str, Any]], opts: Options,
         "kpi": _kpi(rows, stock, now),
         "cash": _cash(rows, now, 24 if opts.months in (0, 24) else 12),
         "consignment": _consignment(rows, now),
-        "stock_value": _stock_value(rows_all, now, 24 if opts.months in (0, 24) else 12),
+        "stock_value": _stock_value(rows_all, now),
         "quality": _quality(rows),
     }
 
@@ -830,7 +830,10 @@ def _quality(rows):
 # 12 ------------------------------------------------- unsold stock value
 
 
-def _stock_value(rows, now, span):
+MAX_HISTORY_MONTHS = 240   # guard against a bad date (e.g. 1970) blowing up the chart
+
+
+def _stock_value(rows, now):
     """仪表盘“未售出商品总价值”, looked back month by month.
 
     Same rule as the dashboard (BUY_IN items not yet sold, cost added up as
@@ -838,8 +841,15 @@ def _stock_value(rows, now, span):
     or before that month end and it had not been sold by then. The last bar is
     today and equals the dashboard figure. Uses all items, whatever the page
     filters say, exactly like the dashboard. Nothing is stored.
+    Starts at the month of the earliest such item, so the whole history shows.
     """
     local = now.astimezone(BUSINESS_TZ)
+    starts = [r["start_at"] for r in rows if r["dash_buy_in"] and r["start_at"] is not None]
+    span = 1
+    if starts:
+        first = min(starts).astimezone(BUSINESS_TZ)
+        span = (local.year - first.year) * 12 + (local.month - first.month) + 1
+        span = max(1, min(span, MAX_HISTORY_MONTHS))
     months, points = [], []
     for back in range(span - 1, -1, -1):
         year, month = _shift_month(local.year, local.month, -back)
