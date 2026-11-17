@@ -84,13 +84,15 @@ class FakeCursor:
 class FakeInventory:
     def __init__(self, docs=None):
         self.docs = [deepcopy(doc) for doc in (docs or [])]
+        for doc in self.docs:
+            doc.setdefault("_id", ObjectId())   # like MongoDB
         self.queries = []
 
     def count_documents(self, query, **kwargs):
         self.queries.append(deepcopy(query))
         return sum(1 for doc in self.docs if _matches(doc, query))
 
-    def find(self, query):
+    def find(self, query, projection=None):
         self.queries.append(deepcopy(query))
         return FakeCursor([doc for doc in self.docs if _matches(doc, query)])
 

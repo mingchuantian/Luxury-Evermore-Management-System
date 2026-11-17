@@ -66,7 +66,7 @@
 <div class="ca-root">
   <h2>Claude新增分析</h2>
   <p class="ca-lede">
-    11 项试运行的分析。全部只读取数据库，不写入任何数据；每次打开页面都按当前数据重新计算。
+    12 项试运行的分析。全部只读取数据库，不写入任何数据；每次打开页面都按当前数据重新计算。
     金额统一换算成 {{ CCY }}（汇率在下面可改，只影响本页显示）。
   </p>
 
@@ -103,7 +103,8 @@
   <div class="ca-toc" role="navigation" aria-label="分析目录">
     {% for id, text in [("ca-1", "① 库龄和滞销"), ("ca-2", "② 周转天数"), ("ca-3", "③ 利润率和回报"), ("ca-4", "④ 货源排行"),
                         ("ca-5", "⑤ 成交价对比标价"), ("ca-6", "⑥ 渠道和付款"), ("ca-7", "⑦ 流程耗时"), ("ca-8", "⑧ 月度指标"),
-                        ("ca-9", "⑨ 资金进出"), ("ca-10", "⑩ 寄卖"), ("ca-11", "⑪ 数据质量")] %}
+                        ("ca-9", "⑨ 资金进出"), ("ca-10", "⑩ 寄卖"), ("ca-11", "⑪ 数据质量"),
+                        ("ca-12", "⑫ 未售出商品总值")] %}
       <a href="#{{ id }}">{{ text }}</a>
     {% endfor %}
   </div>
@@ -403,6 +404,44 @@
       {% endfor %}
     </table></div>
   </section>
+
+  {# ------------------------------------------------------------ 12 unsold stock value #}
+  <section class="ca-card" id="ca-12">
+    {% set v = r.stock_value %}
+    <h3><span class="ca-num">12</span>未售出商品总值 · 每月回顾 <span class="ca-pill">最近 {{ v.months|length }} 个月 · 每月月底</span></h3>
+    <p class="ca-how"><b>怎么看：</b>就是仪表盘上的“未售出商品总价值”，往回看每个月月底是多少。算法和仪表盘一样：所有<b>收货</b>（不含寄卖）、当时还没卖出的商品（已录入、护理中、已到货、上架、预留等），把成本加起来。
+      最后一根柱子是今天，和仪表盘上的数字一样。</p>
+    <div class="ca-tiles">
+      <div class="ca-tile"><div class="l">今天 · 未售出商品总价值</div><div class="v">{{ money(v.now_value) }}</div><div class="s">{{ v.now_count }} 件，和仪表盘一致</div></div>
+      {% for d, text in [(v.vs_last_month, "上月底"), (v.vs_last_year, "去年同月底")] %}
+        <div class="ca-tile"><div class="l">比{{ text }}</div>
+          {% if d is none %}<div class="v">—</div><div class="s">图上没有{{ text }}</div>
+          {% else %}
+            <div class="v">{{ "+" if d.diff > 0 else "" }}{{ money(d.diff) }}</div>
+            <div class="s"><span class="ca-flat">{{ "▲ 多" if d.diff > 0 else ("▼ 少" if d.diff < 0 else "＝ 持平") }}{% if d.pct is not none %} {{ "{:.0f}%".format(d.pct|abs * 100) }}{% endif %}</span>　{{ text }}是 {{ money(d.base) }}</div>
+          {% endif %}</div>
+      {% endfor %}
+    </div>
+    <div class="ca-sub">每月月底的未售出商品总价值</div>
+    <p class="ca-cap">鼠标移到柱子上能看到当时有几件。</p>
+    <div class="ca-chart" style="height:300px;"><canvas id="c-stock"></canvas></div>
+    <p class="ca-note">
+      说明：和仪表盘一样，成本按录入时的数字直接相加，不换算币种；不受上面“商品归属 / 显示币种 / 汇率”筛选影响。
+      过去每个月的数字是按每件商品的“收货/寄卖日期”和“售出日期”倒推的：那天之前收进来、到月底还没卖出的就算在当月。
+      已经从系统删除的商品查不到，不会出现在过去的月份里。
+      {% if v.no_sale_date %}有 {{ v.no_sale_date }} 件已售商品没有售出日期，算不出是哪个月卖掉的，没有计入过去的月份。{% endif %}
+      {% if v.no_date %}有 {{ v.no_date }} 件没有收货日期，只计入了今天。{% endif %}
+    </p>
+    <details><summary>查看数据表</summary>
+      <div class="ca-scroll"><table>
+        <tr><th>月底</th><th class="n">件数</th><th class="n">未售出商品总价值</th></tr>
+        {% for m in v.months %}{% set i = loop.index0 %}
+          <tr><td>{{ m }}{% if loop.last %}（今天）{% endif %}</td><td class="n">{{ v.count[i] }}</td><td class="n">{{ money(v.value[i]) }}</td></tr>
+        {% endfor %}
+      </table></div>
+    </details>
+  </section>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js"></script>
@@ -436,7 +475,7 @@
       ctx.fillStyle = INK; ctx.font = `600 11px ${Chart.defaults.font.family}`;
       chart.getDatasetMeta(0).data.forEach((bar, i) => {
         const raw = chart.data.datasets[0].data[i];
-        if (raw === null || raw === undefined) return;
+        if (raw === null || raw === undefined || (opts.skipZero && raw === 0)) return;
         const text = (opts.format || compact)(raw);
         if (horizontal) {
           const neg = raw < 0;
@@ -610,6 +649,25 @@
     },
   });
   line("c-cash-cum", {{ k.months|tojson }}, {{ k.cumulative|tojson }}, {unit: CCY, zeroLine: true});
+
+  {% set v = r.stock_value %}
+  (() => {
+    const labels = {{ v.months|tojson }}.map((m, i, all) => i === all.length - 1 ? m + "（今天）" : m);
+    const counts = {{ v.count|tojson }};
+    const tip = tooltip("");
+    tip.callbacks.label = c => ` ${fmt(c.parsed.y)}`;
+    tip.callbacks.footer = items => `${counts[items[0].dataIndex]} 件`;
+    new Chart(document.getElementById("c-stock"), {
+      type: "bar",
+      data: {labels, datasets: [{label: "未售出商品总价值", data: {{ v.value|tojson }}, backgroundColor: S1, hoverBackgroundColor: "#1c5cab",
+        borderRadius: 4, maxBarThickness: 28, categoryPercentage: 0.72}]},
+      options: {
+        maintainAspectRatio: false, layout: {padding: {top: 22}},
+        scales: {x: noGrid(), y: scale({beginAtZero: true, ticks: {color: MUTED, padding: 6, callback: v => compact(v)}})},
+        plugins: {legend: {display: false}, tooltip: tip, tipLabels: {show: true, skipZero: true}},
+      },
+    });
+  })();
 })();
 </script>
 {% endblock %}

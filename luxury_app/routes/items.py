@@ -1,6 +1,6 @@
 import re
 from math import ceil
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from flask import Response, flash, redirect, render_template, request, send_file, session, url_for
@@ -40,8 +40,79 @@ from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from .sales import _sync_sold_to_shopify
 from ..auth import ROLE_ADMIN
 from ..inventory_scan_history import scan_history_for_skus
+from ..claude_analytics import norm_ccy
 from .. import shopify_maintenance
 
+
+
+# ---------------- 库存列表排序（只读，不改数据） ----------------
+# ""           录入系统时间 新→旧（默认，和以前一样）
+# "date_desc"  收货/寄卖日期 新→旧；"date_asc" 旧→新
+# "cost_desc"  成本 高→低；"cost_asc" 低→高
+LIST_SORTS = ("", "date_desc", "date_asc", "cost_desc", "cost_asc")
+# Rough rates (same defaults as Claude新增分析), only used to put
+# mixed-currency costs in a sensible order. Unknown currency → sorted last.
+SORT_TO_SGD = {"SGD": 1.0, "RMB": 1 / 5.3, "USD": 1.3}
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _aware(value):
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _shown_date(doc):
+    """The date the list shows in 收货/寄卖日期."""
+    return _aware(doc.get("purchase_at")) or _aware(doc.get("created_at"))
+
+
+def _cost_in_sgd(doc):
+    try:
+        cost = float(doc.get("cost"))
+    except (TypeError, ValueError):
+        return None
+    if cost <= 0:
+        return None
+    currency = norm_ccy(doc.get("cost_currency") or doc.get("currency") or "SGD")
+    if currency is None:
+        return None
+    return cost * SORT_TO_SGD[currency]
+
+
+def _sorted_page(items, filt, sort, skip, limit):
+    """One page of the item list in the chosen order.
+
+    Default: newest entered first, straight from MongoDB (as before). Other
+    orders read only the sort fields of the matching items, order them here,
+    then load the full documents for this page. Nothing is written or stored.
+    """
+    if not sort:
+        return list(items.find(filt).sort("created_at", DESCENDING).skip(skip).limit(limit))
+    keys = list(items.find(filt, {
+        "_id": 1, "purchase_at": 1, "created_at": 1,
+        "cost": 1, "cost_currency": 1, "currency": 1,
+    }))
+
+    def newest_first(doc):
+        return (_shown_date(doc) or _EPOCH, _aware(doc.get("created_at")) or _EPOCH)
+
+    if sort == "date_asc":
+        keys.sort(key=newest_first)
+    elif sort in ("cost_desc", "cost_asc"):
+        keys.sort(key=newest_first, reverse=True)   # ties: newest first
+        priced = [k for k in keys if _cost_in_sgd(k) is not None]
+        unpriced = [k for k in keys if _cost_in_sgd(k) is None]
+        priced.sort(key=_cost_in_sgd, reverse=(sort == "cost_desc"))
+        keys = priced + unpriced                    # no cost: always last
+    else:   # date_desc
+        keys.sort(key=newest_first, reverse=True)
+
+    page_ids = [k["_id"] for k in keys[skip:skip + limit]]
+    if not page_ids:
+        return []
+    by_id = {doc["_id"]: doc for doc in items.find({"_id": {"$in": page_ids}})}
+    return [by_id[i] for i in page_ids if i in by_id]
 
 def register(app, items, audit_logs=None, inventory_check_sessions=None):
     def _dt8_date_str(value) -> str:
@@ -153,6 +224,9 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
         status = request.args.get("status", "").strip()
         source_type = request.args.get("source_type", "").strip()  # BUY_IN / CONSIGNMENT
         ownership = request.args.get("ownership", "").strip().lower()
+        sort = request.args.get("sort", "").strip()
+        if sort not in LIST_SORTS:
+            sort = ""
 
         # pagination (cap at 1000 per page)
         try:
@@ -227,12 +301,7 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             page = total_pages
 
         skip = (page - 1) * per_page
-        docs = list(
-            items.find(filt)
-            .sort("created_at", DESCENDING)
-            .skip(skip)
-            .limit(per_page)
-        )
+        docs = _sorted_page(items, filt, sort, skip, per_page)
         for d in docs:
             _attach_sold_view_fields(d)
         # 盘查记录: Admin only (inventory checks are Admin-only). Live, not stored.
@@ -258,6 +327,7 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             per_page=per_page,
             total=total,
             total_pages=total_pages,
+            sort=sort,
         )
 
     # ---------------- 新增：收货/寄卖 两个入口 ----------------

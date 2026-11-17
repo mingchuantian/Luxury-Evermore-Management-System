@@ -211,6 +211,12 @@ def normalize(doc: Dict[str, Any], opts: Options, now: datetime) -> Dict[str, An
         "profit": None, "profit_estimated": False, "profit_recorded": False,
         "days_to_sell": None, "age_days": None,
         "received_at": None, "on_shelf_at": None, "inbound_at": None,
+        "status_at": None,   # when the item last moved into its current status
+        # Exactly what the dashboard's 未售出商品总价值 adds up: source_type is
+        # literally "BUY_IN" and cost is a stored number (no currency conversion).
+        "dash_buy_in": doc.get("source_type") == "BUY_IN",
+        "dash_cost": doc.get("cost") if isinstance(doc.get("cost"), (int, float))
+                     and not isinstance(doc.get("cost"), bool) else 0,
     }
 
     listing_raw = to_num(doc.get("listing_price"))
@@ -227,6 +233,8 @@ def normalize(doc: Dict[str, Any], opts: Options, now: datetime) -> Dict[str, An
                   "ON_SHELF": "on_shelf_at"}.get(entry.get("to"))
         if at and target and (row[target] is None or at < row[target]):
             row[target] = at
+        if at and entry.get("to") == status and (row["status_at"] is None or at > row["status_at"]):
+            row["status_at"] = at
     row["received_at"] = row["received_at"] or to_dt(doc.get("received_at"))
 
     sales = doc.get("sold_record") or []
@@ -366,6 +374,7 @@ def build_report(docs: Iterable[Dict[str, Any]], opts: Options,
         "kpi": _kpi(rows, stock, now),
         "cash": _cash(rows, now, 24 if opts.months in (0, 24) else 12),
         "consignment": _consignment(rows, now),
+        "stock_value": _stock_value(rows_all, now, 24 if opts.months in (0, 24) else 12),
         "quality": _quality(rows),
     }
 
@@ -815,4 +824,70 @@ def _quality(rows):
         "checks": result,
         "issue_total": sum(c["count"] for c in result),
         "clean": sum(1 for c in result if c["count"] == 0),
+    }
+
+
+# 12 ------------------------------------------------- unsold stock value
+
+
+def _stock_value(rows, now, span):
+    """仪表盘“未售出商品总价值”, looked back month by month.
+
+    Same rule as the dashboard (BUY_IN items not yet sold, cost added up as
+    stored), but for each month end: an item counts if its 收货/寄卖日期 is on
+    or before that month end and it had not been sold by then. The last bar is
+    today and equals the dashboard figure. Uses all items, whatever the page
+    filters say, exactly like the dashboard. Nothing is stored.
+    """
+    local = now.astimezone(BUSINESS_TZ)
+    months, points = [], []
+    for back in range(span - 1, -1, -1):
+        year, month = _shift_month(local.year, local.month, -back)
+        months.append(f"{year:04d}-{month:02d}")
+        next_year, next_month = _shift_month(year, month, 1)
+        points.append(now if back == 0 else _month_start(next_year, next_month))
+
+    value = [0.0] * span
+    count = [0] * span
+    no_date = no_sale_date = 0
+    now_value = 0.0
+    for r in rows:
+        if not r["dash_buy_in"]:
+            continue
+        sold = r["status"] == "SOLD"
+        if not sold:
+            now_value += r["dash_cost"]
+            count[-1] += 1
+        start = r["start_at"]
+        if start is None:
+            no_date += 1
+            continue
+        until = None
+        if sold:
+            until = r["sold_at"]
+            if until is None:
+                no_sale_date += 1
+                continue
+        for i, point in enumerate(points[:-1]):
+            if start <= point and (until is None or until > point):
+                value[i] += r["dash_cost"]
+                count[i] += 1
+    value[-1] = now_value   # today: identical to the dashboard
+
+    def change(back):
+        if span <= back:
+            return None
+        base = value[-1 - back]
+        return {"base": base, "diff": value[-1] - base, "pct": _ratio(value[-1] - base, base) if base else None}
+
+    return {
+        "months": months,
+        "value": [round(v) for v in value],
+        "count": count,
+        "now_value": now_value,
+        "now_count": count[-1],
+        "vs_last_month": change(1),
+        "vs_last_year": change(12),
+        "no_date": no_date,
+        "no_sale_date": no_sale_date,
     }

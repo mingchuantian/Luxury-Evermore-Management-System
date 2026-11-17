@@ -276,6 +276,55 @@ class SectionTests(unittest.TestCase):
         self.assertEqual(report([])["quality"]["issue_total"], 0)
 
 
+class StockValueTests(unittest.TestCase):
+    def _docs(self):
+        return [
+            item("A", bought=100, cost=1000),                                       # 8 Aug, unsold
+            item("B", bought=70, cost=2000, sale={"sold_at": ago(20), "sold_price": 2500}),   # 7 Sep → sold 27 Oct
+            item("C", bought=40, cost=500, source="CONSIGNMENT"),                  # consignment: not counted
+            item("D", "RETURNED", bought=60, cost=1000),                           # not SOLD → counted (as dashboard)
+            item("E", "INBOUND", bought=3, cost=800),                               # 已录入 counts
+            item("F", bought=50, cost=700, status="SOLD", sold_record=[{}]),        # sold, date unknown
+            item("G", "REPARING", bought=5, cost=0),                                # 护理中, no cost
+            item("H", bought=10, cost=400, source_type=None),                       # dashboard skips: no source_type
+            item("I", bought=10, cost=500, ownership="management"),                # counted whatever the filter
+            item("J", bought=10, cost="900"),                                       # text cost: dashboard adds 0
+        ]
+
+    def test_month_end_value_follows_dashboard_rule(self):
+        v = report(self._docs())["stock_value"]
+        self.assertEqual(len(v["months"]), 12)
+        self.assertEqual(v["months"][-4:], ["2026-08", "2026-09", "2026-10", "2026-11"])
+        self.assertEqual(v["value"][-4:], [1000, 4000, 2000, 3300])
+        self.assertEqual(v["count"][-4:], [1, 3, 2, 6])
+        self.assertEqual(v["value"][:-4], [0] * 8)
+        self.assertEqual((v["now_value"], v["now_count"]), (3300, 6))
+        self.assertEqual(v["vs_last_month"]["diff"], 1300)
+        self.assertAlmostEqual(v["vs_last_month"]["pct"], 0.65)
+        self.assertIsNone(v["vs_last_year"])
+        self.assertEqual((v["no_sale_date"], v["no_date"]), (1, 0))
+        # Page filters (ownership, currency) don't change it.
+        self.assertEqual(report(self._docs(), ownership="management", ccy="RMB")["stock_value"]["value"], v["value"])
+
+    def test_today_equals_dashboard(self):
+        try:
+            import mongomock
+        except ImportError:
+            self.skipTest("mongomock not installed")
+        from luxury_app.routes.dashboard import _inventory_value_totals
+
+        db = mongomock.MongoClient()["t"]
+        db.items.insert_many(self._docs())
+        dashboard = _inventory_value_totals(db.items)["unsold"]
+        self.assertEqual(report(list(db.items.find({})))["stock_value"]["now_value"], dashboard)
+
+    def test_span_follows_period(self):
+        docs = [item("A", bought=400, cost=5300, ccy="RMB")]
+        self.assertEqual(len(report(docs, months=24)["stock_value"]["months"]), 24)
+        self.assertEqual(len(report(docs, months=0)["stock_value"]["months"]), 24)
+        self.assertEqual(report(docs)["stock_value"]["value"], [5300] * 12)   # not converted
+
+
 class ReadOnlyItems:
     """Only find() exists: any attempt to write raises AttributeError."""
 
@@ -321,13 +370,14 @@ class RouteTests(unittest.TestCase):
                  created_at=now - timedelta(days=30), sale={"sold_at": now - timedelta(days=2), "sold_price": 1300}),
         ]
 
-    def test_page_renders_all_eleven_sections_read_only(self):
+    def test_page_renders_all_sections_read_only(self):
         items = ReadOnlyItems(self._docs())
         response = self._client(items).get("/claude-analytics")
         html = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        for number in range(1, 12):
+        for number in range(1, 13):
             self.assertIn(f'id="ca-{number}"', html)
+        self.assertIn('id="c-stock"', html)
         self.assertIn('href="/claude-analytics">Claude新增分析</a>', html)
         self.assertIn("STOCK1", html)
         self.assertIn("&lt;b&gt;Jo&lt;/b&gt;", html)          # user text is escaped
