@@ -102,17 +102,20 @@ def scanned_in_both(store_check, room_check, items):
       {"sku", "name", "brand", "status", "store": {...}, "room": {...}, "latest": "store"|"room"}
     where store/room = {"at", "spot_label"}.
     """
-    def first_scans(check):
+    def latest_scans(check):
         found = {}
         for scan in (check or {}).get("scans") or []:
             sku = scan.get("sku")
-            if sku and sku not in found:
-                spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
-                at = _aware(scan.get("scanned_at")) or _aware((check or {}).get("completed_at"))
+            if not sku:
+                continue
+            spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
+            at = _aware(scan.get("scanned_at")) or _aware((check or {}).get("completed_at"))
+            earlier = found.get(sku)
+            if earlier is None or (at and (earlier["at"] is None or at > earlier["at"])):
                 found[sku] = {"at": at, "spot_label": SPOT_ZH.get(spot, "")}
         return found
 
-    in_store, in_room = first_scans(store_check), first_scans(room_check)
+    in_store, in_room = latest_scans(store_check), latest_scans(room_check)
     both = sorted(set(in_store) & set(in_room))
     if not both:
         return []

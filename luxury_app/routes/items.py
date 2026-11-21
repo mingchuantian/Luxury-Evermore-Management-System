@@ -86,20 +86,23 @@ NOT_IN_LAST_CHECK_STATUSES = ("RECEIVED", "ON_SHELF")
 
 
 def _latest_checks(inventory_check_sessions):
-    """The most recent finished store check and back-room check (read-only).
+    """The checks 最近一次盘库 is compared against (read-only).
 
-    A bag is either on display or in the back room, so 最近一次盘库 means
-    both together: the latest finished check of each kind.
+    A bag is either on display or in the back room, so this takes both kinds:
+    for each kind, the latest finished check plus the latest check still in
+    progress (bags already scanned there are not missing either).
     """
+    fields = {"check_type": 1, "status": 1, "started_at": 1, "completed_at": 1,
+              "scanned_skus": 1, "scans": 1}
     latest = []
     for check_type in ("store", "room"):
-        doc = inventory_check_sessions.find_one(
-            {"status": "completed", "check_type": check_type},
-            {"check_type": 1, "started_at": 1, "completed_at": 1, "scanned_skus": 1, "scans": 1},
-            sort=[("completed_at", DESCENDING)],
-        )
-        if doc:
-            latest.append(doc)
+        for status, order in (("completed", "completed_at"), ("active", "started_at")):
+            doc = inventory_check_sessions.find_one(
+                {"status": status, "check_type": check_type}, fields,
+                sort=[(order, DESCENDING)],
+            )
+            if doc:
+                latest.append(doc)
     return latest
 
 
@@ -267,9 +270,12 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             if session.get("role") == ROLE_ADMIN and inventory_check_sessions is not None:
                 last_checks = _latest_checks(inventory_check_sessions)
                 seen = sorted({sku for doc in last_checks for sku in doc.get("scanned_skus") or []})
-                by_type = {doc.get("check_type"): doc for doc in last_checks}
+                # Bags seen in both kinds of check (finished or in progress).
+                by_type = {}
+                for doc in last_checks:
+                    by_type.setdefault(doc.get("check_type"), []).extend(doc.get("scans") or [])
                 if len(by_type) == 2:
-                    both_rows = scanned_in_both(by_type["store"], by_type["room"], items)
+                    both_rows = scanned_in_both({"scans": by_type["store"]}, {"scans": by_type["room"]}, items)
                 filt["status"] = {"$in": list(NOT_IN_LAST_CHECK_STATUSES)}
                 if seen:
                     filt["sku"] = {"$nin": seen}

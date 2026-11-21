@@ -315,17 +315,20 @@ class NotInLastCheckFilterTests(Base):
         self.sessions.insert_many([old_store, new_store, room, active_room, legacy])
 
         html = self._client().get(self.URL).get_data(as_text=True)
-        # Seen in latest store (1, 2) or latest room (3): left out. 7 sold, 8 inbound: not this status.
-        self.assertEqual(self._skus(html), ["BAG004", "BAG005", "BAG006", "BAG009"])
+        # Seen in latest store (1, 2), latest room (3) or the room check in progress (4): left out.
+        # 7 sold, 8 inbound: not this status. 5 only in a legacy check, 6 only in an older one.
+        self.assertEqual(self._skus(html), ["BAG005", "BAG006", "BAG009"])
         self.assertIn('<option value="NOT_IN_LAST_CHECK" selected>已到货/上架 但未出现在最近一次盘库</option>', html)
         note = html.split('class="last-check-note"', 1)[1].split("</div>\n{% endif %}", 1)[0]
         self.assertIn(f'/inventory-check/sessions/{new_store["_id"]}', note)
         self.assertIn(f'/inventory-check/sessions/{room["_id"]}', note)
         self.assertNotIn(str(old_store["_id"]), note)
-        self.assertNotIn(str(active_room["_id"]), note)
+        self.assertIn(f'/inventory-check/sessions/{active_room["_id"]}', note)
+        self.assertIn("进行中</span>", note)
+        self.assertIn("目前已扫 1 件", note)
         # Combines with search, type and paging links.
         html = self._client().get(self.URL + "&q=BAG00").get_data(as_text=True)
-        self.assertEqual(self._skus(html), ["BAG004", "BAG005", "BAG006", "BAG009"])
+        self.assertEqual(self._skus(html), ["BAG005", "BAG006", "BAG009"])
         self.assertEqual(self._skus(self._client().get(self.URL + "&ownership=management").get_data(as_text=True)),
                          ["BAG009"])
 
@@ -354,13 +357,29 @@ class NotInLastCheckFilterTests(Base):
         self.assertEqual(self._skus(client.get(self.URL).get_data(as_text=True).split('id="both-box"')[1]
                                     .split("</table>", 1)[1]), ["BAG004", "BAG005", "BAG006", "BAG007", "BAG008", "BAG009"])
 
+    def test_check_in_progress_counts_too(self):
+        older_active = _session("store", [_scan("BAG005", T0)], status="active")
+        active = _session("store", [_scan("BAG001", T0 + timedelta(hours=3), "island")],
+                          status="active", started=T0 + timedelta(hours=2))
+        room = _session("room", [_scan("BAG001", T0 + timedelta(hours=1), "shelf_b"), _scan("BAG002", T0)])
+        self.sessions.insert_many([older_active, active, room])
+        html = self._client().get(self.URL).get_data(as_text=True)
+        missing = self._skus(html.split('id="both-box"')[1].split("</table>", 1)[1])
+        self.assertNotIn("BAG001", missing)   # scanned in the store check in progress
+        self.assertNotIn("BAG002", missing)   # scanned in the finished room check
+        self.assertIn("BAG005", missing)      # only in an older in-progress check
+        self.assertNotIn(str(older_active["_id"]), html)
+        box = html.split('class="both-box"', 1)[1].split("</table>", 1)[0]
+        self.assertIn("两处都扫到的包（1 件）", box)
+        self.assertIn("<b>店内陈列 · 中岛柜</b>", box)
+
     def test_without_finished_checks_lists_all_and_says_so(self):
         html = self._client().get(self.URL).get_data(as_text=True)
         self.assertIn("还没有已结束的盘查", html)
         self.assertEqual(len(self._skus(html)), 9)
         self.sessions.insert_one(_session("room", [_scan("BAG001", T0)]))
         html = self._client().get(self.URL).get_data(as_text=True)
-        self.assertIn("还没有已结束的店内陈列盘查", html)
+        self.assertIn("还没有店内陈列盘查", html)
         self.assertNotIn("BAG001", self._skus(html))
 
     def test_admin_only(self):

@@ -32,6 +32,7 @@
   .sync-status.bad { background: #ffeef0; color: #b00020; border-color: #f5c2c7; font-weight: 700; }
   .last-check-note { margin:10px 0; padding:10px 14px; border:1px solid #e3c56b; background:#fff8e1; border-radius:6px; font-size:14px; }
   .both-pointer { margin-top:6px; color:#8a6100; }
+  .check-live { display:inline-block; padding:0 6px; border-radius:8px; background:#e8f0fe; color:#1f4f7a; font-size:12px; font-weight:700; }
   .last-check-note ul { margin:6px 0; padding-left:20px; }
   th.sortable a { color:inherit; text-decoration:none; white-space:nowrap; cursor:pointer; }
   th.sortable a:hover { text-decoration:underline; }
@@ -104,15 +105,20 @@
 {% if last_checks is not none %}
 <div class="last-check-note">
   {% if last_checks %}
-    <b>已到货/上架 但未出现在最近一次盘库：</b>状态是“已到货”或“上架在售”，但在下面这{{ "两次" if last_checks|length == 2 else "次" }}盘查里都没有被扫到的商品。
+    {% set kinds = last_checks|map(attribute="check_type")|list %}
+    <b>已到货/上架 但未出现在最近一次盘库：</b>状态是“已到货”或“上架在售”，但在下面{{ "这次" if last_checks|length == 1 else "这几次" }}盘查里都没有被扫到的商品。
     <ul>
       {% for c in last_checks %}
-        <li><a href="{{ url_for('inventory_check_session', session_id=c._id|string) }}">{{ "店内陈列盘查" if c.check_type == "store" else "老板间盘查" }}</a>：{{ c.started_at|dt8 }} 开始，{{ c.completed_at|dt8 }} 结束，扫描 {{ (c.scanned_skus or [])|length }} 件</li>
+        <li><a href="{{ url_for('inventory_check_session', session_id=c._id|string) }}">{{ "店内陈列盘查" if c.check_type == "store" else "老板间盘查" }}</a>：
+          {% if c.status == "active" %}<span class="check-live">进行中</span>，{{ c.started_at|dt8 }} 开始，目前已扫 {{ (c.scanned_skus or [])|length }} 件
+          {% else %}{{ c.started_at|dt8 }} 开始，{{ c.completed_at|dt8 }} 结束，扫描 {{ (c.scanned_skus or [])|length }} 件{% endif %}</li>
       {% endfor %}
     </ul>
-    {% if last_checks|length == 1 %}<div>还没有已结束的{{ "老板间盘查" if last_checks[0].check_type == "store" else "店内陈列盘查" }}，所以只对照了上面这一次。</div>{% endif %}
-    <div class="muted">盘查之后才到货的商品也会出现在这里。正在进行中（或重新打开）的盘查不算，结束后才会用上。</div>
-    {% if both_rows %}<div class="both-pointer">另有 <b>{{ both_rows|length }}</b> 件在两次盘查里都被扫到了，详见下方<a href="#both-box">“两处都扫到的包”</a>。</div>{% endif %}
+    {% for kind, name in (("store", "店内陈列盘查"), ("room", "老板间盘查")) %}
+      {% if kind not in kinds %}<div>还没有{{ name }}，所以这部分没有对照。</div>{% endif %}
+    {% endfor %}
+    <div class="muted">每种盘查取最近结束的一次，再加上正在进行中的一次（进行中已扫到的包也不算未出现）。盘查之后才到货的商品也会出现在这里。</div>
+    {% if both_rows %}<div class="both-pointer">另有 <b>{{ both_rows|length }}</b> 件在店内和老板间都被扫到了，详见下方<a href="#both-box">“两处都扫到的包”</a>。</div>{% endif %}
   {% else %}
     <b>还没有已结束的盘查。</b>下面列出了所有“已到货”和“上架在售”的商品。
   {% endif %}
