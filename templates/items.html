@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_scanned_in_both.html" import scanned_in_both_table, scanned_in_both_style %}
 {% block content %}
 <h2>库存列表</h2>
 
@@ -30,6 +31,7 @@
   .sync-status { margin: 6px 0 12px; padding: 8px 12px; border-radius: 6px; background: #eefbf3; color: #166534; border: 1px solid #bbe5c8; }
   .sync-status.bad { background: #ffeef0; color: #b00020; border-color: #f5c2c7; font-weight: 700; }
   .last-check-note { margin:10px 0; padding:10px 14px; border:1px solid #e3c56b; background:#fff8e1; border-radius:6px; font-size:14px; }
+  .both-pointer { margin-top:6px; color:#8a6100; }
   .last-check-note ul { margin:6px 0; padding-left:20px; }
   th.sortable a { color:inherit; text-decoration:none; white-space:nowrap; cursor:pointer; }
   th.sortable a:hover { text-decoration:underline; }
@@ -110,11 +112,13 @@
     </ul>
     {% if last_checks|length == 1 %}<div>还没有已结束的{{ "老板间盘查" if last_checks[0].check_type == "store" else "店内陈列盘查" }}，所以只对照了上面这一次。</div>{% endif %}
     <div class="muted">盘查之后才到货的商品也会出现在这里。正在进行中（或重新打开）的盘查不算，结束后才会用上。</div>
+    {% if both_rows %}<div class="both-pointer">另有 <b>{{ both_rows|length }}</b> 件在两次盘查里都被扫到了，详见下方<a href="#both-box">“两处都扫到的包”</a>。</div>{% endif %}
   {% else %}
     <b>还没有已结束的盘查。</b>下面列出了所有“已到货”和“上架在售”的商品。
   {% endif %}
 </div>
 {% endif %}
+{% if both_rows %}<div id="both-box">{{ scanned_in_both_table(both_rows) }}</div>{{ scanned_in_both_style() }}{% endif %}
 
 <div class="row" style="margin: 10px 0; align-items: center;">
   <div class="muted">

@@ -1,5 +1,7 @@
 {% extends "layout.html" %}
+{% from "_scanned_in_both.html" import scanned_in_both_table, scanned_in_both_style %}
 {% block content %}
+{{ scanned_in_both_style() }}
 <style>
   .compare-sources { display:flex; gap:12px; flex-wrap:wrap; margin:10px 0 16px; }
   .compare-sources div { padding:10px 14px; background:#fff; border:1px solid var(--border); border-radius:8px; }
@@ -52,8 +54,5 @@
   <div class="msg ok">所有“已到货”和“上架在售”的商品都在这两次盘查中扫到了。</div>
 {% endif %}
 
-{% if scanned_in_both %}
-  <h3>两处都扫到的 SKU</h3>
-  <p class="muted">同一件商品不应同时在店内和老板间，可能是扫重了或中途搬动过：{{ scanned_in_both|join("、") }}</p>
-{% endif %}
+{{ scanned_in_both_table(scanned_in_both) }}
 {% endblock %}

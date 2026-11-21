@@ -1,0 +1,40 @@
+{# Bags scanned in both the store check and the back-room check. #}
+{% macro scanned_in_both_table(rows) %}
+{% if rows %}
+<div class="both-box">
+  <h3>⚠️ 两处都扫到的包（{{ rows|length }} 件）</h3>
+  <p>这些包在店内陈列盘查和老板间盘查里<b>都被扫到了</b>。一只包不会同时在两个地方，通常是盘查期间被从一处拿到了另一处，也可能是重复扫描。
+    系统以<b>时间更晚的那次</b>为准（标“✓ 以此为准”），它们<b>不算丢失</b>。请顺手确认一下这些包现在确实在“以此为准”的位置。</p>
+  <div class="both-scroll"><table>
+    <thead><tr><th>SKU</th><th>商品</th><th>老板间盘查扫到</th><th>店内陈列盘查扫到</th><th>现在应在</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><b><a href="{{ url_for('item_detail', item_key=r.sku) }}" target="_blank" rel="noopener noreferrer">{{ r.sku }}</a></b></td>
+        <td>{{ r.brand }} {{ r.name or "-" }}</td>
+        {% for side in ("room", "store") %}
+          <td class="{{ 'both-latest' if r.latest == side else 'both-old' }}">
+            {{ r[side].at|dt8 if r[side].at else "-" }}{% if r[side].spot_label %} · {{ r[side].spot_label }}{% endif %}
+            {% if r.latest == side %}<span class="both-tag">✓ 以此为准</span>{% endif %}
+          </td>
+        {% endfor %}
+        <td><b>{{ "店内陈列" if r.latest == "store" else "老板间" }}{% if r[r.latest].spot_label %} · {{ r[r.latest].spot_label }}{% endif %}</b></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro scanned_in_both_style() %}
+<style>
+  .both-box { margin:14px 0; padding:12px 14px; border:2px solid #e0a400; background:#fffaf0; border-radius:8px; }
+  .both-box h3 { margin:0 0 6px; color:#8a6100; }
+  .both-box p { margin:0 0 10px; font-size:14px; }
+  .both-scroll { overflow-x:auto; }
+  .both-box td.both-old { color:#8a8a8a; text-decoration:line-through; text-decoration-color:#c9c9c9; }
+  .both-box td.both-latest { font-weight:600; }
+  .both-tag { display:inline-block; margin-left:6px; padding:0 6px; border-radius:8px; background:#e6f4ea; color:#1f6b3a; font-size:12px; font-weight:700; }
+</style>
+{% endmacro %}

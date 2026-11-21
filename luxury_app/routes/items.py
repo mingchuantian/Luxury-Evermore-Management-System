@@ -39,7 +39,7 @@ from consignment_receipt_template.consignment_settlement_generation import (
 from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from .sales import _sync_sold_to_shopify
 from ..auth import ROLE_ADMIN
-from ..inventory_scan_history import scan_history_for_skus
+from ..inventory_scan_history import scan_history_for_skus, scanned_in_both
 from ..claude_analytics import norm_ccy
 from .. import shopify_maintenance
 
@@ -95,7 +95,7 @@ def _latest_checks(inventory_check_sessions):
     for check_type in ("store", "room"):
         doc = inventory_check_sessions.find_one(
             {"status": "completed", "check_type": check_type},
-            {"check_type": 1, "started_at": 1, "completed_at": 1, "scanned_skus": 1},
+            {"check_type": 1, "started_at": 1, "completed_at": 1, "scanned_skus": 1, "scans": 1},
             sort=[("completed_at", DESCENDING)],
         )
         if doc:
@@ -262,10 +262,14 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
 
         filt = {}
         last_checks = None
+        both_rows = []
         if status == NOT_IN_LAST_CHECK:
             if session.get("role") == ROLE_ADMIN and inventory_check_sessions is not None:
                 last_checks = _latest_checks(inventory_check_sessions)
                 seen = sorted({sku for doc in last_checks for sku in doc.get("scanned_skus") or []})
+                by_type = {doc.get("check_type"): doc for doc in last_checks}
+                if len(by_type) == 2:
+                    both_rows = scanned_in_both(by_type["store"], by_type["room"], items)
                 filt["status"] = {"$in": list(NOT_IN_LAST_CHECK_STATUSES)}
                 if seen:
                     filt["sku"] = {"$nin": seen}
@@ -350,6 +354,7 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             shopify_sync=_shopify_sync_info(),
             scan_latest=scan_latest,
             last_checks=last_checks,
+            both_rows=both_rows,
             NOT_IN_LAST_CHECK=NOT_IN_LAST_CHECK,
             items=docs,
             STATUS=STATUS,

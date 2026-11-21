@@ -8,7 +8,7 @@ from flask import abort, flash, jsonify, redirect, render_template, request, ses
 from models import now
 
 from ..auth import ROLE_ADMIN, require_roles
-from ..inventory_scan_history import ROOM_SPOTS, SPOT_ZH, SPOTS_BY_TYPE, spot_keys
+from ..inventory_scan_history import ROOM_SPOTS, SPOT_ZH, SPOTS_BY_TYPE, scanned_in_both, spot_keys
 
 
 SKU_RE = re.compile(r"^[A-Z0-9_-]{2,64}$")
@@ -415,7 +415,6 @@ def register(app, items, inventory_check_sessions):
             return "请选择一次已完成的店内陈列盘查和一次已完成的老板间盘查。", 400
 
         scanned = set(store.get("scanned_skus") or []) | set(room.get("scanned_skus") or [])
-        both = set(store.get("scanned_skus") or []) & set(room.get("scanned_skus") or [])
         first_start = min(
             filter(None, (_aware(store.get("started_at")), _aware(room.get("started_at"))))
         )
@@ -439,5 +438,5 @@ def register(app, items, inventory_check_sessions):
             store=store,
             room=room,
             lost=lost,
-            scanned_in_both=sorted(both),
+            scanned_in_both=scanned_in_both(store, room, items),
         )

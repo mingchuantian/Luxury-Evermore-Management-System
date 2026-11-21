@@ -92,3 +92,42 @@ def scan_history_for_skus(sessions, skus: Iterable[str]) -> Dict[str, List[Dict[
     for records in history.values():
         records.sort(key=lambda record: record["at"] or oldest, reverse=True)
     return history
+
+
+def scanned_in_both(store_check, room_check, items):
+    """Bags scanned in both a store check and a back-room check (read-only).
+
+    Usually a bag moved during the checks. The later scan is taken as where it
+    is now. Returns rows sorted by SKU:
+      {"sku", "name", "brand", "status", "store": {...}, "room": {...}, "latest": "store"|"room"}
+    where store/room = {"at", "spot_label"}.
+    """
+    def first_scans(check):
+        found = {}
+        for scan in (check or {}).get("scans") or []:
+            sku = scan.get("sku")
+            if sku and sku not in found:
+                spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
+                at = _aware(scan.get("scanned_at")) or _aware((check or {}).get("completed_at"))
+                found[sku] = {"at": at, "spot_label": SPOT_ZH.get(spot, "")}
+        return found
+
+    in_store, in_room = first_scans(store_check), first_scans(room_check)
+    both = sorted(set(in_store) & set(in_room))
+    if not both:
+        return []
+    details = {
+        doc.get("sku"): doc
+        for doc in items.find({"sku": {"$in": both}}, {"_id": 0, "sku": 1, "name": 1, "brand": 1, "status": 1})
+    }
+    rows = []
+    for sku in both:
+        store_at, room_at = in_store[sku]["at"], in_room[sku]["at"]
+        latest = "store" if (store_at and (not room_at or store_at >= room_at)) else "room"
+        doc = details.get(sku, {})
+        rows.append({
+            "sku": sku, "name": doc.get("name") or "", "brand": doc.get("brand") or "",
+            "status": doc.get("status") or "",
+            "store": in_store[sku], "room": in_room[sku], "latest": latest,
+        })
+    return rows

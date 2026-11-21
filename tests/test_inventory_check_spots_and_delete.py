@@ -329,6 +329,31 @@ class NotInLastCheckFilterTests(Base):
         self.assertEqual(self._skus(self._client().get(self.URL + "&ownership=management").get_data(as_text=True)),
                          ["BAG009"])
 
+    def test_bags_scanned_in_both_are_shown_with_an_explanation(self):
+        store = _session("store", [_scan("BAG001", T0 + timedelta(hours=5), "live_wall"),
+                                   _scan("BAG002", T0 + timedelta(hours=5))], started=T0 + timedelta(hours=4))
+        room = _session("room", [_scan("BAG001", T0 + timedelta(hours=1), "shelf_a"),
+                                 _scan("BAG002", T0 + timedelta(hours=9), "sofa"),
+                                 _scan("BAG003", T0 + timedelta(hours=1))])
+        self.sessions.insert_many([store, room])
+        client = self._client()
+        for html in (client.get(self.URL).get_data(as_text=True),
+                     client.get(f"/inventory-check/compare?store={store['_id']}&room={room['_id']}").get_data(as_text=True)):
+            box = html.split('class="both-box"', 1)[1].split("</table>", 1)[0]
+            self.assertIn("两处都扫到的包（2 件）", box)
+            self.assertIn("不算丢失", box)
+            rows = box.split("<tr>")[2:]
+            # BAG001: room 11:00 → store 15:00, so the store scan wins.
+            self.assertIn("2026-11-10 11:00 · 货架A", rows[0])
+            self.assertIn("2026-11-10 15:00 · 直播墙\n            <span class=\"both-tag\">✓ 以此为准</span>", rows[0])
+            self.assertIn("<b>店内陈列 · 直播墙</b>", rows[0])
+            # BAG002: moved back into the room later.
+            self.assertIn("<b>老板间 · 沙发</b>", rows[1])
+            self.assertNotIn("BAG003", box)
+        # Neither is listed as missing.
+        self.assertEqual(self._skus(client.get(self.URL).get_data(as_text=True).split('id="both-box"')[1]
+                                    .split("</table>", 1)[1]), ["BAG004", "BAG005", "BAG006", "BAG007", "BAG008", "BAG009"])
+
     def test_without_finished_checks_lists_all_and_says_so(self):
         html = self._client().get(self.URL).get_data(as_text=True)
         self.assertIn("还没有已结束的盘查", html)
