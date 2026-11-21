@@ -4,7 +4,7 @@
 {% macro spot_select(sku, spot) -%}
   <select class="js-spot spot-row-select" data-sku="{{ sku }}" aria-label="{{ sku }} 的位置">
     <option value="" {{ "selected" if not spot }}>未选位置</option>
-    {% for key, zh, en in ROOM_SPOTS %}<option value="{{ key }}" {{ "selected" if spot == key }}>{{ zh }}</option>{% endfor %}
+    {% for key, zh, en in spots %}<option value="{{ key }}" {{ "selected" if spot == key }}>{{ zh }}</option>{% endfor %}
   </select>
   <span class="spot-saved" aria-live="polite"></span>
 {%- endmacro %}
@@ -25,6 +25,8 @@
   @keyframes stocktake-pulse { 50% { transform: scale(1.03); } }
   .not-on-website { color:#b00020; font-weight:700; }
   .on-website { color:#28623b; }
+  .reopen-form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:4px 0 14px; }
+  .reopen-btn { background:#fff !important; color:#1f2325 !important; border:1px solid var(--border-strong) !important; }
   .check-type-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:13px; font-weight:700; background:#eef2f5; }
   .stocktake-feedback-title { font-size:22px; font-weight:700; }
   .stocktake-sku { font-size:20px; font-weight:700; letter-spacing:.06em; }
@@ -69,15 +71,15 @@
   {% if active %}
     <p class="muted">摄像头会持续识别；每个 SKU 在本次 Session 中只记录一次。识别成功后会发出提示音并震动，可立即扫描下一个。</p>
     {% if is_store %}<p class="muted">店内陈列盘查：已在 Shopify 上的商品显示绿色；<span class="not-on-website">未上 website 的商品会红框提醒</span>，并在结果中列出。</p>{% endif %}
-    {% if is_room %}
+    {% if spots %}
     <div class="spot-current">
       <label for="current-spot">当前位置</label>
       <select id="current-spot">
         <option value="" {{ "selected" if not last_spot }}>未选位置</option>
-        {% for key, zh, en in ROOM_SPOTS %}<option value="{{ key }}" {{ "selected" if last_spot == key }}>{{ zh }}</option>{% endfor %}
+        {% for key, zh, en in spots %}<option value="{{ key }}" {{ "selected" if last_spot == key }}>{{ zh }}</option>{% endfor %}
       </select>
     </div>
-    <p class="muted" style="margin-top:4px;">扫到的包会记在当前位置。换到下一个货架时先改这里；扫完后也可以在下面的记录里逐条修改。</p>
+    <p class="muted" style="margin-top:4px;">扫到的包会记在当前位置。换到下一个位置时先改这里；扫完后也可以在下面的记录里逐条修改。</p>
     {% endif %}
     <div class="stocktake-camera"><div id="stocktake-reader"></div></div>
     <div class="stocktake-controls">
@@ -100,27 +102,33 @@
     </div>
     <ul class="scan-list" id="scan-list">
       {% for scan in (check_session.scans or [])|reverse %}
-        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span>{% if is_store %} · {% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}{% endif %}{% if is_room %} · {{ spot_select(scan.sku, scan.spot) }}{% endif %}</li>
+        <li data-sku="{{ scan.sku }}"><b>{{ scan.sku }}</b> · {{ scan.name or "未命名商品" }} · <span class="status-{{ scan.status }}">{{ scan.status }}</span>{% if is_store %} · {% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}{% endif %}{% if spots %} · {{ spot_select(scan.sku, scan.spot) }}{% endif %}</li>
       {% else %}
         <li class="muted" id="empty-scan-row">尚无扫描记录</li>
       {% endfor %}
     </ul>
 
-    <form method="post" action="{{ url_for('inventory_check_complete', session_id=check_session._id|string) }}" onsubmit="return confirm('确认结束本次盘查？结束后不能继续扫描。');">
+    <form method="post" action="{{ url_for('inventory_check_complete', session_id=check_session._id|string) }}" onsubmit="return confirm('确认结束本次盘查？之后如果发现漏扫，可以在结果页点“重新打开盘查”继续扫描。');">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button class="btn" type="submit">结束盘查并生成结果</button>
     </form>
   {% elif check_session.check_type %}
+    <form class="reopen-form" method="post" action="{{ url_for('inventory_check_reopen', session_id=check_session._id|string) }}"
+          onsubmit="return confirm('重新打开这次盘查？\n\n已扫描的 {{ check_session.scanned_skus|length }} 件和它们的位置都会保留，可以继续扫描漏掉的包；扫完后再点“结束盘查”，结束时间会更新为那时的时间。');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button class="btn reopen-btn" type="submit">重新打开盘查（继续扫描）</button>
+      <span class="muted">发现漏扫的包时用。</span>
+    </form>
     <div class="item-summary">
       <p>本次共扫描：<strong>{{ check_session.scanned_skus|length }}</strong> 件</p>
       {% if is_store %}<p class="missing-count">其中未上 website：<strong class="not-on-website">{{ not_on_website|length }}</strong> 件</p>{% endif %}
     </div>
 
-    {% if is_room and check_session.scans %}
+    {% if spots and check_session.scans %}
       <h3>按位置查看</h3>
       <div class="spot-chips" id="spot-chips">
         <button type="button" class="spot-chip active" data-spot="*">全部 {{ check_session.scans|length }}</button>
-        {% for key, zh, en in ROOM_SPOTS %}{% if spot_counts.get(key) %}
+        {% for key, zh, en in spots %}{% if spot_counts.get(key) %}
           <button type="button" class="spot-chip" data-spot="{{ key }}">{{ zh }} <span data-spot-count="{{ key }}">{{ spot_counts[key] }}</span></button>
         {% endif %}{% endfor %}
         {% if spot_counts.get("") %}
@@ -134,10 +142,10 @@
       <p class="muted">按系统当前数据实时计算（Shopify 每小时同步一次）：挂网后，下次同步完成时就会从这里消失。</p>
       {% if not_on_website %}
       <table>
-        <thead><tr><th>SKU</th><th>商品名称</th><th>品牌</th><th>包身编码</th><th>当前状态</th></tr></thead>
+        <thead><tr><th>SKU</th><th>商品名称</th><th>品牌</th><th>包身编码</th><th>当前状态</th><th>位置</th></tr></thead>
         <tbody>
           {% for item in not_on_website %}
-          <tr><td><b><a href="{{ url_for('item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.sku }}</a></b></td><td>{{ item.name or "-" }}</td><td>{{ item.brand or "-" }}</td><td>{{ item.serial_code or "-" }}</td><td>{{ item.status }}</td></tr>
+          <tr><td><b><a href="{{ url_for('item_detail', item_key=item.sku) }}" target="_blank" rel="noopener noreferrer">{{ item.sku }}</a></b></td><td>{{ item.name or "-" }}</td><td>{{ item.brand or "-" }}</td><td>{{ item.serial_code or "-" }}</td><td>{{ item.status }}</td><td>{{ SPOT_ZH.get(item.spot, "未选位置") if item.spot else "未选位置" }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -150,10 +158,10 @@
 
     <h3>本次全部扫描记录</h3>
     <table>
-      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th>{% if is_store %}<th>Shopify</th>{% endif %}{% if is_room %}<th>位置</th>{% endif %}</tr></thead>
+      <thead><tr><th>扫码时间</th><th>SKU</th><th>商品名称</th><th>扫码时状态</th>{% if is_store %}<th>Shopify</th>{% endif %}{% if spots %}<th>位置</th>{% endif %}</tr></thead>
       <tbody id="scan-table">
         {% for scan in (check_session.scans or [])|reverse %}
-        <tr data-spot="{{ scan.spot if scan.spot in SPOT_ZH else '' }}"><td>{{ scan.scanned_at|dt8 }}</td><td><b><a href="{{ url_for('item_detail', item_key=scan.sku) }}" target="_blank" rel="noopener noreferrer">{{ scan.sku }}</a></b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td>{% if is_store %}<td>{% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}</td>{% endif %}{% if is_room %}<td>{{ spot_select(scan.sku, scan.spot) }}</td>{% endif %}</tr>
+        <tr data-spot="{{ scan.spot if scan.spot in SPOT_ZH else '' }}"><td>{{ scan.scanned_at|dt8 }}</td><td><b><a href="{{ url_for('item_detail', item_key=scan.sku) }}" target="_blank" rel="noopener noreferrer">{{ scan.sku }}</a></b></td><td>{{ scan.name or "-" }}</td><td>{{ scan.status }}</td>{% if is_store %}<td>{% if linked.get(scan.sku) %}<span class="on-website">已在 Shopify</span>{% else %}<span class="not-on-website">未上website</span>{% endif %}</td>{% endif %}{% if spots %}<td>{{ spot_select(scan.sku, scan.spot) }}</td>{% endif %}</tr>
         {% else %}
         <tr><td colspan="5">没有扫描记录</td></tr>
         {% endfor %}
@@ -195,13 +203,13 @@
   {% endif %}
 </div>
 
-{% if is_room %}
+{% if spots %}
 <script>
 (() => {
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const spotUrl = {{ url_for('inventory_check_set_spot', session_id=check_session._id|string)|tojson }};
 
-  const SPOT_NAMES = Object.fromEntries({{ ROOM_SPOTS|tojson }}.map(s => [s[0], s[1]]));
+  const SPOT_NAMES = Object.fromEntries({{ spots|tojson }}.map(s => [s[0], s[1]]));
 
   function bump(spot, delta) {
     let el = document.querySelector(`[data-spot-count="${CSS.escape(spot)}"]`);
@@ -281,9 +289,9 @@
   const manualForm = document.getElementById("manual-form");
   const manualValue = document.getElementById("manual-value");
   const seen = new Set({{ (check_session.scanned_skus or [])|tojson }});
-  const isRoomCheck = {{ is_room|tojson }};
+  const hasSpots = {{ (spots|length > 0)|tojson }};
   const spotSelect = document.getElementById("current-spot");
-  const SPOTS = {{ ROOM_SPOTS|tojson }};
+  const SPOTS = {{ spots|tojson }};
   const spotName = key => (SPOTS.find(s => s[0] === key) || [null, "未选位置"])[1];
   function spotOf(sku) {
     const row = scanList.querySelector(`li[data-sku="${CSS.escape(sku)}"] select.js-spot`);
@@ -357,7 +365,7 @@
     const website = !isStoreCheck ? "" : (shopifyLinked
       ? ` · <span class="on-website">已在 Shopify</span>`
       : ` · <span class="not-on-website">未上website</span>`);
-    const spot = isRoomCheck ? ` · ${spotSelectHtml(scan.sku, scan.spot || "")}` : "";
+    const spot = hasSpots ? ` · ${spotSelectHtml(scan.sku, scan.spot || "")}` : "";
     row.innerHTML = `<b>${escapeHtml(scan.sku)}</b> · ${escapeHtml(scan.name || "未命名商品")} · <span class="status-${escapeHtml(scan.status)}">${escapeHtml(scan.status)}</span>${website}${spot}`;
     scanList.prepend(row);
     scanCount.textContent = `${count} 件`;
@@ -370,7 +378,7 @@
     lastDecodedAt = time;
     if (seen.has(sku)) {
       show("duplicate", "已扫描过，本次不重复记录", sku,
-        isRoomCheck ? `记录的位置：${spotName(spotOf(sku))}（可在下方记录里修改）` : "请继续扫描下一件商品。");
+        hasSpots ? `记录的位置：${spotName(spotOf(sku))}（可在下方记录里修改）` : "请继续扫描下一件商品。");
       if (navigator.vibrate) navigator.vibrate(45);
       return;
     }
@@ -382,7 +390,7 @@
         method: "POST",
         cache: "no-store",
         headers: {"Accept":"application/json", "Content-Type":"application/json", "X-CSRF-Token":csrf},
-        body: JSON.stringify(isRoomCheck ? {sku, spot: spotSelect.value} : {sku})
+        body: JSON.stringify(hasSpots ? {sku, spot: spotSelect.value} : {sku})
       });
       const result = await response.json();
       if (!response.ok || !result.ok) throw new Error(result.message || "记录失败");
@@ -392,7 +400,7 @@
       } else if (result.duplicate) {
         seen.add(sku);
         show("duplicate", "已扫描过，本次不重复记录", sku,
-          isRoomCheck ? `记录的位置：${spotName(result.scan.spot || "")}（可在下方记录里修改）` : "请继续扫描下一件商品。");
+          hasSpots ? `记录的位置：${spotName(result.scan.spot || "")}（可在下方记录里修改）` : "请继续扫描下一件商品。");
       } else {
         seen.add(sku);
         addScan(result.scan, result.scan_count, result.shopify_linked);
@@ -400,12 +408,13 @@
           ? (result.scan.name || "已到店商品")
           : `${result.scan.name || "商品"}（当前状态：${result.scan.status}）`;
         if (isStoreCheck && !result.shopify_linked) {
-          show("warning", "⚠️ 该商品未上website", sku, `${detail} · 已记录，结束后会列在结果里`);
+          show("warning", "⚠️ 该商品未上website", sku,
+            `${detail} · ${spotName(result.scan.spot || "")} · 已记录，结束后会列在结果里`);
           beep(); setTimeout(beep, 180); setTimeout(beep, 360);
           if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
         } else {
-          const title = isStoreCheck ? "✓ 扫描成功 · 已在 Shopify 上"
-            : isRoomCheck ? `✓ 扫描成功 · ${spotName(result.scan.spot || "")}` : "✓ 扫描成功";
+          const where = hasSpots ? ` · ${spotName(result.scan.spot || "")}` : "";
+          const title = isStoreCheck ? `✓ 扫描成功 · 已在 Shopify 上${where}` : `✓ 扫描成功${where}`;
           show("success", title, sku, detail);
           beep();
           if (navigator.vibrate) navigator.vibrate(80);

@@ -126,12 +126,67 @@ class RoomSpotTests(Base):
         self.assertIn('<option value="shelf_3" selected>货架3</option>', current)
         self.assertEqual(html.count('class="js-spot spot-row-select" data-sku="BAG'), 2)
 
-    def test_store_page_has_no_spot(self):
-        store = _session("store", [_scan("BAG001", T0)], status="active")
+    def test_store_check_started_without_spots_keeps_old_scans(self):
+        # A store check already half done before spots existed.
+        store = _session("store", [_scan("BAG001", T0), _scan("BAG002", T0)], status="active")
         self.sessions.insert_one(store)
-        html = self._client().get(f"/inventory-check/sessions/{store['_id']}").get_data(as_text=True)
-        self.assertNotIn('id="current-spot"', html)
-        self.assertNotIn('class="js-spot spot-row-select" data-sku="BAG', html)
+        client = self._client()
+        html = client.get(f"/inventory-check/sessions/{store['_id']}").get_data(as_text=True)
+        current = html.split('<select id="current-spot">', 1)[1].split("</select>", 1)[0]
+        for zh in ("直播墙", "老板间墙", "中岛柜", "门口和对外展柜", "沙发"):
+            self.assertIn(zh, current)
+        self.assertNotIn("货架A", current)
+        self.assertIn('<option value="" selected>未选位置</option>', current)
+        self.assertEqual(html.count('class="js-spot spot-row-select" data-sku="BAG'), 2)
+
+        url = f"/inventory-check/sessions/{store['_id']}/scan"
+        new = client.post(url, json={"sku": "BAG003", "spot": "island"}).json
+        self.assertEqual(new["scan"]["spot"], "island")
+        client.post(url, json={"sku": "BAG004", "spot": "shelf_a"})     # a back-room spot: dropped
+        doc = self.sessions.find_one({"_id": store["_id"]})
+        self.assertEqual([s.get("spot") for s in doc["scans"]], [None, None, "island", None])
+        untouched = {k: v for k, v in doc["scans"][0].items() if k != "scanned_at"}
+        self.assertEqual(untouched, {k: v for k, v in store["scans"][0].items() if k != "scanned_at"})
+        self.assertEqual(doc["status"], "active")
+        # Default for the next scan is the last spot used.
+        html = client.get(f"/inventory-check/sessions/{store['_id']}").get_data(as_text=True)
+        self.assertIn('<option value="island" selected>中岛柜</option>', html.split('<select id="current-spot">', 1)[1])
+
+    def test_spots_never_cross_between_kinds(self):
+        store = _session("store", [_scan("BAG001", T0)])
+        room = _session("room", [_scan("BAG002", T0)], status="active")
+        self.sessions.insert_many([store, room])
+        client = self._client()
+        spot = lambda sid, sku, value: client.post(f"/inventory-check/sessions/{sid}/spot",
+                                                   json={"sku": sku, "spot": value})
+        self.assertEqual(spot(store["_id"], "BAG001", "entrance").json["spot_label"], "门口和对外展柜")
+        self.assertEqual(spot(store["_id"], "BAG001", "sofa").status_code, 404)        # back-room sofa
+        self.assertEqual(spot(room["_id"], "BAG002", "store_sofa").status_code, 404)   # store sofa
+        self.assertEqual(spot(store["_id"], "BAG001", "").status_code, 200)
+        room_scan = client.post(f"/inventory-check/sessions/{room['_id']}/scan",
+                                json={"sku": "BAG003", "spot": "live_wall"}).json
+        self.assertNotIn("spot", room_scan["scan"])
+
+    def test_store_spot_shows_in_results_and_item_pages(self):
+        store = _session("store", [_scan("BAG001", T0, "live_wall"), _scan("BAG002", T0, "store_sofa"),
+                                   _scan("BAG003", T0)])
+        self.sessions.insert_one(store)
+        client = self._client()
+        html = client.get(f"/inventory-check/sessions/{store['_id']}").get_data(as_text=True)
+        chips = html.split('id="spot-chips"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('直播墙 <span data-spot-count="live_wall">1</span>', chips)
+        self.assertIn('沙发 <span data-spot-count="store_sofa">1</span>', chips)
+        self.assertIn('未选位置 <span data-spot-count="">1</span>', chips)
+        # Not on the website (no item is linked here): listed with where it sits.
+        missing = html.split("店内陈列但未上 website 的商品", 1)[1].split("</table>", 1)[0]
+        self.assertIn("<td>直播墙</td>", missing)
+        self.assertIn("<td>未选位置</td>", missing)
+        history = scan_history_for_skus(self.sessions, ["BAG001", "BAG002"])
+        self.assertEqual((history["BAG001"][0]["spot_label"], history["BAG001"][0]["spot_label_en"]),
+                         ("直播墙", "Live-stream wall"))
+        self.assertEqual(history["BAG002"][0]["spot_label"], "沙发")
+        row = client.get("/items").get_data(as_text=True).split("BAG001", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("店内陈列 · <b>直播墙</b>", row)
 
     def test_completed_room_page_groups_by_spot(self):
         room = _session("room", [_scan("BAG001", T0, "shelf_a"), _scan("BAG002", T0, "shelf_a"),
@@ -186,6 +241,57 @@ class RoomSpotTests(Base):
         self.assertNotIn("沙发", listing)
         detail = client.get("/management/items/BAG009").get_data(as_text=True)
         self.assertIn("Back room · <b>Sofa</b>", detail)
+
+
+class ReopenCheckTests(Base):
+    def test_reopen_keeps_scans_and_allows_more(self):
+        room = _session("room", [_scan("BAG001", T0, "shelf_a"), _scan("BAG002", T0, "sofa")])
+        self.sessions.insert_one(room)
+        client = self._client()
+        page = client.get(f"/inventory-check/sessions/{room['_id']}").get_data(as_text=True)
+        self.assertIn("重新打开盘查（继续扫描）", page)
+        self.assertIn("已扫描的 2 件", page)
+
+        response = client.post(f"/inventory-check/sessions/{room['_id']}/reopen")
+        self.assertEqual(response.status_code, 302)
+        doc = self.sessions.find_one({"_id": room["_id"]})
+        self.assertEqual(doc["status"], "active")
+        self.assertNotIn("completed_at", doc)
+        self.assertEqual([(s["sku"], s["spot"]) for s in doc["scans"]], [("BAG001", "shelf_a"), ("BAG002", "sofa")])
+
+        page = client.get(f"/inventory-check/sessions/{room['_id']}").get_data(as_text=True)
+        self.assertIn("正在盘查库存", page)
+        self.assertNotIn("重新打开盘查（继续扫描）", page)
+        url = f"/inventory-check/sessions/{room['_id']}/scan"
+        self.assertTrue(client.post(url, json={"sku": "BAG001", "spot": "floor"}).json["duplicate"])
+        added = client.post(url, json={"sku": "BAG003", "spot": "floor"}).json
+        self.assertFalse(added["duplicate"])
+        self.assertEqual(added["scan_count"], 3)
+
+        client.post(f"/inventory-check/sessions/{room['_id']}/complete")
+        doc = self.sessions.find_one({"_id": room["_id"]})
+        self.assertEqual(doc["status"], "completed")
+        self.assertGreater(doc["completed_at"].replace(tzinfo=timezone.utc), T0 + timedelta(hours=1))
+        self.assertEqual(doc["scanned_skus"], ["BAG001", "BAG002", "BAG003"])
+        self.assertEqual(doc["scans"][0]["spot"], "shelf_a")       # earlier spot untouched
+
+    def test_only_typed_completed_checks_by_admin(self):
+        legacy = _session(None, [_scan("BAG001", T0)])
+        legacy.pop("check_type")
+        legacy["missing_items"] = []
+        active = _session("store", [], status="active")
+        store = _session("store", [_scan("BAG002", T0)])
+        self.sessions.insert_many([legacy, active, store])
+        client = self._client()
+        client.post(f"/inventory-check/sessions/{legacy['_id']}/reopen")
+        self.assertEqual(self.sessions.find_one({"_id": legacy["_id"]})["status"], "completed")
+        self.assertNotIn("重新打开盘查（继续扫描）", client.get(f"/inventory-check/sessions/{legacy['_id']}").get_data(as_text=True))
+        client.post(f"/inventory-check/sessions/{active['_id']}/reopen")
+        self.assertEqual(self.sessions.find_one({"_id": active["_id"]})["status"], "active")
+        self.assertEqual(client.post("/inventory-check/sessions/nope/reopen").status_code, 302)
+        staff = self._client(ROLE_STAFF)
+        self.assertEqual(staff.post(f"/inventory-check/sessions/{store['_id']}/reopen").status_code, 403)
+        self.assertEqual(self.sessions.find_one({"_id": store["_id"]})["status"], "completed")
 
 
 class DeleteCheckTests(Base):

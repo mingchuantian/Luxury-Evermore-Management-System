@@ -8,7 +8,7 @@ from flask import abort, flash, jsonify, redirect, render_template, request, ses
 from models import now
 
 from ..auth import ROLE_ADMIN, require_roles
-from ..inventory_scan_history import ROOM_SPOTS, SPOT_ZH
+from ..inventory_scan_history import ROOM_SPOTS, SPOT_ZH, SPOTS_BY_TYPE, spot_keys
 
 
 SKU_RE = re.compile(r"^[A-Z0-9_-]{2,64}$")
@@ -150,15 +150,19 @@ def register(app, items, inventory_check_sessions):
                 is_linked = bool(doc and doc.get("shopify_sku_exist") is True)
                 linked[scan.get("sku")] = is_linked
                 if doc and not is_linked:
-                    not_on_website.append(_item_summary(doc, scan.get("scanned_at")))
+                    summary = _item_summary(doc, scan.get("scanned_at"))
+                    summary["spot"] = scan.get("spot") or ""
+                    not_on_website.append(summary)
 
-        # Back-room checks: how many bags were found at each spot.
+        # Store and back-room checks: how many bags were found at each spot.
         is_room = check_session.get("check_type") == CHECK_ROOM
+        spots = SPOTS_BY_TYPE.get(check_session.get("check_type"), ())
+        allowed = spot_keys(check_session.get("check_type"))
         spot_counts = {}
         last_spot = ""
-        if is_room:
+        if spots:
             for scan in check_session.get("scans") or []:
-                spot = scan.get("spot") if scan.get("spot") in SPOT_ZH else ""
+                spot = scan.get("spot") if scan.get("spot") in allowed else ""
                 spot_counts[spot] = spot_counts.get(spot, 0) + 1
                 last_spot = spot or last_spot
 
@@ -167,6 +171,7 @@ def register(app, items, inventory_check_sessions):
             check_session=check_session,
             is_store=check_session.get("check_type") == CHECK_STORE,
             is_room=is_room,
+            spots=spots,
             spot_counts=spot_counts,
             last_spot=last_spot,
             linked=linked,
@@ -183,8 +188,6 @@ def register(app, items, inventory_check_sessions):
         body = request.get_json(silent=True) or request.form
         sku = (body.get("sku") or "").strip().upper()
         spot = (body.get("spot") or "").strip()
-        if spot and spot not in SPOT_ZH:
-            spot = ""
         if not SKU_RE.fullmatch(sku):
             return jsonify({
                 "ok": False,
@@ -218,8 +221,10 @@ def register(app, items, inventory_check_sessions):
         scanned_at = now()
         scan = _item_summary(item, scanned_at=scanned_at)
         if spot:
-            # Only back-room checks send a spot; the scan keeps its position.
-            scan["spot"] = spot
+            # Keep the spot only if it is one of this kind of check's places.
+            kind = (inventory_check_sessions.find_one({"_id": oid}, {"check_type": 1}) or {}).get("check_type")
+            if spot in spot_keys(kind):
+                scan["spot"] = spot
         update = inventory_check_sessions.update_one(
             {
                 "_id": oid,
@@ -335,10 +340,28 @@ def register(app, items, inventory_check_sessions):
             "inventory_check_session", session_id=session_id
         ))
 
+    @app.post("/inventory-check/sessions/<session_id>/reopen")
+    @require_roles(ROLE_ADMIN)
+    def inventory_check_reopen(session_id):
+        """Put a finished store / back-room check back in progress to add missed bags.
+
+        Every scan (and its spot) is kept; finishing again sets a new
+        completed_at. Old checks from before store / room types froze a result
+        when they finished, so they stay closed.
+        """
+        oid = _session_id(session_id)
+        if oid:
+            inventory_check_sessions.update_one(
+                {"_id": oid, "status": "completed", "check_type": {"$in": list(CHECK_TYPES)}},
+                {"$set": {"status": "active", "updated_at": now()},
+                 "$unset": {"completed_at": ""}},
+            )
+        return redirect(url_for("inventory_check_session", session_id=session_id))
+
     @app.post("/inventory-check/sessions/<session_id>/spot")
     @require_roles(ROLE_ADMIN)
     def inventory_check_set_spot(session_id):
-        """Change where one scanned bag sits in the back room (during or after the check)."""
+        """Change where one scanned bag sits (store or back room; during or after the check)."""
         oid = _session_id(session_id)
         body = request.get_json(silent=True) or request.form
         sku = (body.get("sku") or "").strip().upper()
@@ -347,8 +370,10 @@ def register(app, items, inventory_check_sessions):
             return jsonify({"ok": False, "message": "无效的位置"}), 400
         if not oid or not SKU_RE.fullmatch(sku):
             return jsonify({"ok": False, "message": "找不到这条扫描记录"}), 404
+        # A spot only fits its own kind of check; "" (未选位置) fits both.
+        kinds = [kind for kind in SPOTS_BY_TYPE if not spot or spot in spot_keys(kind)]
         update = inventory_check_sessions.update_one(
-            {"_id": oid, "check_type": CHECK_ROOM, "scans.sku": sku},
+            {"_id": oid, "check_type": {"$in": kinds}, "scans.sku": sku},
             {"$set": {"scans.$.spot": spot}},
         )
         if not update.matched_count:

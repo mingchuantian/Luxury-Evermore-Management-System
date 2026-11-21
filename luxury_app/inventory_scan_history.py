@@ -26,8 +26,23 @@ ROOM_SPOTS = (
     ("floor", "地面", "Floor"),
     ("sofa", "沙发", "Sofa"),
 )
-SPOT_ZH = {key: zh for key, zh, _ in ROOM_SPOTS}
-SPOT_EN = {key: en for key, _, en in ROOM_SPOTS}
+# Same field (scans[].spot) for the store check, with its own keys so a key
+# always means one place (store sofa ≠ back-room sofa).
+STORE_SPOTS = (
+    ("live_wall", "直播墙", "Live-stream wall"),
+    ("boss_room_wall", "老板间墙", "Back-room wall"),
+    ("island", "中岛柜", "Island counter"),
+    ("entrance", "门口和对外展柜", "Entrance & window display"),
+    ("store_sofa", "沙发", "Sofa"),
+)
+SPOTS_BY_TYPE = {"room": ROOM_SPOTS, "store": STORE_SPOTS}
+SPOT_ZH = {key: zh for spots in SPOTS_BY_TYPE.values() for key, zh, _ in spots}
+SPOT_EN = {key: en for spots in SPOTS_BY_TYPE.values() for key, _, en in spots}
+
+
+def spot_keys(check_type):
+    """Spot keys allowed for one kind of check (empty for legacy checks)."""
+    return {key for key, _, _ in SPOTS_BY_TYPE.get(check_type, ())}
 
 
 def _aware(value):
