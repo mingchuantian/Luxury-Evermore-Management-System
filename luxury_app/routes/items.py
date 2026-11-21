@@ -80,6 +80,29 @@ def _cost_in_sgd(doc):
     return cost * SORT_TO_SGD[currency]
 
 
+# ---------------- 状态筛选：已到货/上架 但未出现在最近一次盘库 ----------------
+NOT_IN_LAST_CHECK = "NOT_IN_LAST_CHECK"
+NOT_IN_LAST_CHECK_STATUSES = ("RECEIVED", "ON_SHELF")
+
+
+def _latest_checks(inventory_check_sessions):
+    """The most recent finished store check and back-room check (read-only).
+
+    A bag is either on display or in the back room, so 最近一次盘库 means
+    both together: the latest finished check of each kind.
+    """
+    latest = []
+    for check_type in ("store", "room"):
+        doc = inventory_check_sessions.find_one(
+            {"status": "completed", "check_type": check_type},
+            {"check_type": 1, "started_at": 1, "completed_at": 1, "scanned_skus": 1},
+            sort=[("completed_at", DESCENDING)],
+        )
+        if doc:
+            latest.append(doc)
+    return latest
+
+
 def _sorted_page(items, filt, sort, skip, limit):
     """One page of the item list in the chosen order.
 
@@ -238,7 +261,17 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
         per_page = 500
 
         filt = {}
-        if status:
+        last_checks = None
+        if status == NOT_IN_LAST_CHECK:
+            if session.get("role") == ROLE_ADMIN and inventory_check_sessions is not None:
+                last_checks = _latest_checks(inventory_check_sessions)
+                seen = sorted({sku for doc in last_checks for sku in doc.get("scanned_skus") or []})
+                filt["status"] = {"$in": list(NOT_IN_LAST_CHECK_STATUSES)}
+                if seen:
+                    filt["sku"] = {"$nin": seen}
+            else:
+                status = ""
+        elif status:
             filt["status"] = status
         if source_type:
             filt["source_type"] = source_type
@@ -316,6 +349,8 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             "items.html",
             shopify_sync=_shopify_sync_info(),
             scan_latest=scan_latest,
+            last_checks=last_checks,
+            NOT_IN_LAST_CHECK=NOT_IN_LAST_CHECK,
             items=docs,
             STATUS=STATUS,
             STATUS_ZH=STATUS_ZH,

@@ -154,6 +154,7 @@ class OwnershipTests(unittest.TestCase):
     def _make_app(self, items, payments=None):
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters.setdefault("dt8", lambda v: str(v or ""))   # real app: app_factory
 
         @app.get("/logout", endpoint="logout")
         def logout():
@@ -220,6 +221,7 @@ class OwnershipTests(unittest.TestCase):
         items = FakeInventory()
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters.setdefault("dt8", lambda v: str(v or ""))   # real app: app_factory
 
         @app.get("/login", endpoint="login")
         def login():
@@ -259,6 +261,7 @@ class OwnershipTests(unittest.TestCase):
         ])
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters.setdefault("dt8", lambda v: str(v or ""))   # real app: app_factory
 
         @app.get("/login", endpoint="login")
         def login():
@@ -312,6 +315,7 @@ class OwnershipTests(unittest.TestCase):
         scoped_items = RoleScopedItems(admin_items, staff_items)
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters.setdefault("dt8", lambda v: str(v or ""))   # real app: app_factory
         register_admin_items(app, scoped_items)
 
         with app.test_client() as client:
@@ -340,6 +344,7 @@ class OwnershipTests(unittest.TestCase):
         scoped_items = RoleScopedItems(admin_items, staff_items)
         app = Flask(__name__, template_folder="../templates")
         app.secret_key = "test-secret-that-is-long-enough-for-tests"
+        app.jinja_env.filters.setdefault("dt8", lambda v: str(v or ""))   # real app: app_factory
 
         @app.get("/", endpoint="index")
         def index():

@@ -294,6 +294,56 @@ class ReopenCheckTests(Base):
         self.assertEqual(self.sessions.find_one({"_id": store["_id"]})["status"], "completed")
 
 
+class NotInLastCheckFilterTests(Base):
+    URL = "/items?status=NOT_IN_LAST_CHECK"
+
+    def _skus(self, html):
+        import re
+        body = html.split("<tbody", 1)[-1] if "<tbody" in html else html.split("</thead>", 1)[-1]
+        return sorted(set(re.findall(r"\b(BAG\d{3})\b", body.split("</table>", 1)[0])))
+
+    def test_lists_received_and_on_shelf_items_missed_by_latest_checks(self):
+        self.db.items.update_one({"sku": "BAG006"}, {"$set": {"status": "ON_SHELF"}})
+        self.db.items.update_one({"sku": "BAG007"}, {"$set": {"status": "SOLD"}})
+        self.db.items.update_one({"sku": "BAG008"}, {"$set": {"status": "INBOUND"}})
+        old_store = _session("store", [_scan(f"BAG00{i}", T0) for i in range(1, 7)])
+        new_store = _session("store", [_scan("BAG001", T0), _scan("BAG002", T0)], started=T0 + timedelta(days=1))
+        room = _session("room", [_scan("BAG003", T0, "sofa")], started=T0 + timedelta(days=2))
+        active_room = _session("room", [_scan("BAG004", T0)], status="active", started=T0 + timedelta(days=3))
+        legacy = _session("store", [_scan("BAG005", T0)], started=T0 + timedelta(days=4))
+        legacy.pop("check_type")
+        self.sessions.insert_many([old_store, new_store, room, active_room, legacy])
+
+        html = self._client().get(self.URL).get_data(as_text=True)
+        # Seen in latest store (1, 2) or latest room (3): left out. 7 sold, 8 inbound: not this status.
+        self.assertEqual(self._skus(html), ["BAG004", "BAG005", "BAG006", "BAG009"])
+        self.assertIn('<option value="NOT_IN_LAST_CHECK" selected>已到货/上架 但未出现在最近一次盘库</option>', html)
+        note = html.split('class="last-check-note"', 1)[1].split("</div>\n{% endif %}", 1)[0]
+        self.assertIn(f'/inventory-check/sessions/{new_store["_id"]}', note)
+        self.assertIn(f'/inventory-check/sessions/{room["_id"]}', note)
+        self.assertNotIn(str(old_store["_id"]), note)
+        self.assertNotIn(str(active_room["_id"]), note)
+        # Combines with search, type and paging links.
+        html = self._client().get(self.URL + "&q=BAG00").get_data(as_text=True)
+        self.assertEqual(self._skus(html), ["BAG004", "BAG005", "BAG006", "BAG009"])
+        self.assertEqual(self._skus(self._client().get(self.URL + "&ownership=management").get_data(as_text=True)),
+                         ["BAG009"])
+
+    def test_without_finished_checks_lists_all_and_says_so(self):
+        html = self._client().get(self.URL).get_data(as_text=True)
+        self.assertIn("还没有已结束的盘查", html)
+        self.assertEqual(len(self._skus(html)), 9)
+        self.sessions.insert_one(_session("room", [_scan("BAG001", T0)]))
+        html = self._client().get(self.URL).get_data(as_text=True)
+        self.assertIn("还没有已结束的店内陈列盘查", html)
+        self.assertNotIn("BAG001", self._skus(html))
+
+    def test_admin_only(self):
+        html = self._client(ROLE_STAFF).get(self.URL).get_data(as_text=True)
+        self.assertNotIn("NOT_IN_LAST_CHECK", html)
+        self.assertNotIn('class="last-check-note"', html)
+
+
 class DeleteCheckTests(Base):
     def test_delete_removes_the_check_and_everything_derived_from_it(self):
         store = _session("store", [_scan("BAG001", T0)])
