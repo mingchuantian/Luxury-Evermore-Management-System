@@ -216,6 +216,20 @@
     lookupSku(sku);
   }
 
+// Scanner tuning: only look for QR codes (the library otherwise also tries
+  // a dozen barcode types on every frame), use the phone's built-in detector
+  // when the browser has one, skip the mirrored retry, and scan a larger
+  // central area so the code needn't be lined up exactly.
+  const SCANNER_SETUP = window.Html5QrcodeSupportedFormats ? {
+    verbose: false,
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+    experimentalFeatures: {useBarCodeDetectorIfSupported: true},
+  } : false;
+  const scanArea = (width, height) => {
+    const side = Math.max(200, Math.floor(Math.min(width, height) * 0.8));
+    return {width: side, height: side};
+  };
+
   async function startCamera() {
     if (cameraRunning) return;
     if (typeof Html5Qrcode === "undefined") {
@@ -225,10 +239,10 @@
     cameraMessage.textContent = text.requestingCamera;
     startButton.disabled = true;
     try {
-      scanner = scanner || new Html5Qrcode(readerId, false);
+      scanner = scanner || new Html5Qrcode(readerId, SCANNER_SETUP);
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 15, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        { fps: 20, qrbox: scanArea, aspectRatio: 1.0, disableFlip: true },
         onScanSuccess,
         () => {}
       );
