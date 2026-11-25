@@ -362,6 +362,39 @@ class ShopifyAuthenticationTests(unittest.TestCase):
             "fresh-token",
         )
 
+    def test_access_denied_gets_one_fresh_token(self):
+        # Permissions were approved on the store after the token was cached.
+        token = lambda value, scope: FakeResponse(200, {"access_token": value, "scope": scope, "expires_in": 86399})
+        denied = FakeResponse(200, {"errors": [{"message": "Access denied",
+                                                "extensions": {"code": "ACCESS_DENIED"}}]})
+        ok = FakeResponse(200, {"data": {"urlRedirects": {"nodes": []}}},
+                          headers={"X-Shopify-API-Version": shopify_maintenance.API_VERSION})
+        session = FakeSession([token("old-token", "write_products"), denied,
+                               token("new-token", "write_products,write_online_store_navigation"), ok])
+        provider = shopify_maintenance.ShopifyTokenProvider(
+            shop="example.myshopify.com", client_id="client-id", client_secret="client-secret", session=session)
+
+        result = shopify_maintenance.shopify_gql("query { urlRedirects(first: 1) { nodes { id } } }", {},
+                                                 token_provider=provider)
+
+        self.assertEqual(result, {"urlRedirects": {"nodes": []}})
+        self.assertEqual(provider.granted_scopes, ["write_online_store_navigation", "write_products"])
+        tokens = [c[1]["headers"]["X-Shopify-Access-Token"] for c in session.calls if "/graphql.json" in c[0]]
+        self.assertEqual(tokens, ["old-token", "new-token"])
+
+    def test_access_denied_twice_is_reported(self):
+        token = lambda value: FakeResponse(200, {"access_token": value, "scope": "write_products", "expires_in": 86399})
+        denied = lambda: FakeResponse(200, {"errors": [{"message": "Access denied",
+                                                        "extensions": {"code": "ACCESS_DENIED"}}]})
+        session = FakeSession([token("a"), denied(), token("b"), denied()])
+        provider = shopify_maintenance.ShopifyTokenProvider(
+            shop="example.myshopify.com", client_id="client-id", client_secret="client-secret", session=session)
+        with self.assertRaises(RuntimeError) as raised:
+            shopify_maintenance.shopify_gql("query { urlRedirects(first: 1) { nodes { id } } }", {},
+                                            token_provider=provider)
+        self.assertIn("ACCESS_DENIED", str(raised.exception))
+        self.assertEqual(len([c for c in session.calls if "/graphql.json" in c[0]]), 2)
+
     def test_sku_match_is_exact_and_keeps_featured_image(self):
         gql_result = {
             "productVariants": {

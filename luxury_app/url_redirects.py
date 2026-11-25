@@ -102,6 +102,7 @@ _state: Dict[str, Any] = {
     "last_fix": None,      # {"at", "auto", "done": [...], "failed": [...]}
     "last_error": "",
     "running": False,
+    "progress": None,      # live progress of the current / last run (see _progress)
 }
 _state_lock = threading.Lock()
 _scheduler_thread: Optional[threading.Thread] = None
@@ -152,12 +153,14 @@ def _target_handle(target: str) -> Optional[str]:
     return None
 
 
-def _all_pages(gql: Callable, provider, query: str, key: str) -> List[Dict[str, Any]]:
+def _all_pages(gql: Callable, provider, query: str, key: str, on_page=None) -> List[Dict[str, Any]]:
     nodes, cursor = [], None
     while True:
         data = gql(query, {"cursor": cursor}, token_provider=provider)
         connection = data.get(key) or {}
         nodes.extend(connection.get("nodes") or [])
+        if on_page:
+            on_page(len(nodes))
         page = connection.get("pageInfo") or {}
         if not page.get("hasNextPage"):
             return nodes
@@ -216,7 +219,7 @@ def _managed(key: str, target: str, system: set) -> bool:
     return key in system or bool(SKU_SHAPE.match(key) and _target_handle(target))
 
 
-def plan(items, *, gql: Optional[Callable] = None, provider=None, variants=None):
+def plan(items, *, gql: Optional[Callable] = None, provider=None, variants=None, on_redirect_page=None):
     """Read Shopify + the items' SKUs and work out what needs changing.
 
     Returns (rows, ok_count). Read-only.
@@ -225,7 +228,7 @@ def plan(items, *, gql: Optional[Callable] = None, provider=None, variants=None)
     provider = provider or TOKEN_PROVIDER
     if variants is None:
         variants = _all_pages(gql, provider, QUERY_ALL_VARIANTS, "productVariants")
-    redirects = _all_pages(gql, provider, QUERY_REDIRECTS, "urlRedirects")
+    redirects = _all_pages(gql, provider, QUERY_REDIRECTS, "urlRedirects", on_redirect_page)
     system = _system_skus(items)
 
     # SKU → the distinct products carrying it; handle → the SKUs on that product.
@@ -358,17 +361,6 @@ def _change_record(row: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
     }
 
 
-def _apply_rows(rows, *, gql, provider):
-    done, failed = [], []
-    for row in rows:
-        if row["action"] == "conflict":
-            continue
-        result = apply_row(row, gql=gql, provider=provider)
-        (done if result["ok"] else failed).append(_change_record(row, result))
-        time.sleep(WRITE_DELAY_SECONDS)
-    return done, failed
-
-
 # --------------------------------------------------------- in-memory state
 
 
@@ -395,53 +387,98 @@ def counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return result
 
 
+def _progress(**values) -> None:
+    """Update the live progress shown on the page while a run is going."""
+    with _state_lock:
+        progress = _state["progress"]
+        if progress is not None:
+            progress.update(values)
+            progress["updated_at"] = _utc_now()
+
+
 def run(items, *, fix: bool, auto: bool = False, gql: Optional[Callable] = None, provider=None) -> bool:
-    """Check, and if fix=True apply every fixable row. False if already running."""
+    """Check, and if fix=True apply every fixable row. False if already running.
+
+    Results are published step by step (website states, then the list of
+    things to do, then each fix as it happens), so the page shows progress
+    instead of waiting for the end.
+    """
     gql = gql or shopify_gql
     provider = provider or TOKEN_PROVIDER
+    started = _utc_now()
     with _state_lock:
         if _state["running"]:
             return False
         _state["running"] = True
-    rows = ok = website = None
-    last_fix = None
+        _state["progress"] = {
+            "phase": "读取网站上的商品 SKU", "fix": fix, "auto": auto,
+            "started_at": started, "updated_at": started, "finished_at": None,
+            "variants": 0, "redirects": None, "to_fix": None, "done": 0, "failed": 0,
+            "recent": [],
+        }
     error = ""
     try:
         config_error = provider.configuration_error()
         if config_error:
             raise RuntimeError(config_error)
-        variants = _all_pages(gql, provider, QUERY_ALL_VARIANTS, "productVariants")
+        variants = _all_pages(gql, provider, QUERY_ALL_VARIANTS, "productVariants",
+                              lambda n: _progress(variants=n))
         website = website_states(variants)
-        rows, ok = plan(items, gql=gql, provider=provider, variants=variants)
-        if fix and any(r["action"] != "conflict" for r in rows):
-            done, failed = _apply_rows(rows, gql=gql, provider=provider)
-            last_fix = {"at": _utc_now(), "auto": auto,
-                        "done": done[:RECENT_CHANGES_LIMIT], "failed": failed[:RECENT_CHANGES_LIMIT],
-                        "done_count": len(done), "failed_count": len(failed)}
-            failed_skus = {f["sku"] for f in failed}
-            ok += len(done)
-            rows = [r for r in rows if r["action"] == "conflict" or r["sku"] in failed_skus]
-            for row in rows:
-                match = next((f for f in failed if f["sku"] == row["sku"]), None)
-                if match:
-                    row["error"] = match["message"]
+        with _state_lock:
+            _state["website"] = website   # the item list can use it right away
+        _progress(phase="读取 Shopify 上的 URL 重定向", redirects=0, skus=len(website))
+        rows, ok = plan(items, gql=gql, provider=provider, variants=variants,
+                        on_redirect_page=lambda n: _progress(redirects=n))
+        fixable = [r for r in rows if r["action"] != "conflict"]
+        with _state_lock:
+            _state["rows"] = rows
+            _state["ok_count"] = ok
+            _state["checked_at"] = _utc_now()
+        if fix and fixable:
+            _progress(phase="修复中", to_fix=len(fixable))
+            last_fix = {"at": _utc_now(), "auto": auto, "done": [], "failed": [],
+                        "done_count": 0, "failed_count": 0}
+            for row in fixable:
+                result = apply_row(row, gql=gql, provider=provider)
+                change = _change_record(row, result)
+                with _state_lock:
+                    if result["ok"]:
+                        _state["rows"] = [r for r in _state["rows"] if r["sku"] != row["sku"]]
+                        _state["ok_count"] += 1
+                        last_fix["done_count"] += 1
+                        if len(last_fix["done"]) < RECENT_CHANGES_LIMIT:
+                            last_fix["done"].append(change)
+                    else:
+                        for r in _state["rows"]:
+                            if r["sku"] == row["sku"]:
+                                r["error"] = result["message"]
+                        last_fix["failed_count"] += 1
+                        if len(last_fix["failed"]) < RECENT_CHANGES_LIMIT:
+                            last_fix["failed"].append(change)
+                    _state["last_fix"] = deepcopy(last_fix)
+                    _state["fixed_at"] = last_fix["at"]
+                    progress = _state["progress"]
+                    progress["done"] = last_fix["done_count"]
+                    progress["failed"] = last_fix["failed_count"]
+                    progress["recent"] = ([dict(change, ok=result["ok"])] + progress["recent"])[:15]
+                    progress["updated_at"] = _utc_now()
+                time.sleep(WRITE_DELAY_SECONDS)
     except Exception as exc:  # noqa: BLE001 - keep the previous result on failure
         logger.exception("URL redirect check failed.")
         error = " ".join(str(exc).split())[:500]
         if "ACCESS_DENIED" in error:
-            error = "Shopify app 没有读取 URL 重定向的权限（需要 read/write_online_store_navigation）。"
+            granted = getattr(provider, "granted_scopes", None) or []
+            error = ("Shopify app 没有读取 URL 重定向的权限（需要 read/write_online_store_navigation）。"
+                     + (f"店铺给这个 app 的 token 目前只有：{', '.join(granted)}。" if granted else "")
+                     + "如果 Dev Dashboard 里已经加了权限，请到店铺后台的 Apps 里批准这个 app 的新权限。")
     finally:
         with _state_lock:
-            if rows is not None:
-                _state["rows"] = rows
-                _state["ok_count"] = ok
-                _state["website"] = website
-                _state["checked_at"] = _utc_now()
-            if last_fix is not None:
-                _state["last_fix"] = last_fix
-                _state["fixed_at"] = last_fix["at"]
             _state["last_error"] = error
             _state["running"] = False
+            if _state["progress"] is not None:
+                _state["progress"]["phase"] = "出错" if error else "完成"
+                _state["progress"]["finished_at"] = _utc_now()
+                _state["progress"]["updated_at"] = _utc_now()
     return True
 
 
@@ -513,5 +550,5 @@ def start_scheduler(items):
 def _reset_for_tests(**values):
     with _state_lock:
         _state.update(rows=[], website={}, ok_count=0, checked_at=None, fixed_at=None,
-                      last_fix=None, last_error="", running=False)
+                      last_fix=None, last_error="", running=False, progress=None)
         _state.update(deepcopy(values))

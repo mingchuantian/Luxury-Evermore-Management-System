@@ -21,10 +21,25 @@
   .ur-done-msg { color: #1f6b3a; font-weight: 700; }
   .ur-actions .btn { white-space: nowrap; }
   .ur-nowrap { white-space: nowrap; }
+  .ur-progress { margin: 8px 0 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .ur-progress.running { border: 2px solid #1d4ed8; background: #f5f8ff; }
+  .ur-steps { margin: 6px 0 0; padding-left: 22px; }
+  .ur-steps li.now { font-weight: 700; color: #1d4ed8; }
+  .ur-recent { margin: 2px 0 0; padding-left: 18px; font-size: 13px; max-height: 260px; overflow-y: auto; }
   .ur-box { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
   .ur-box table { margin-top: 6px; }
 </style>
-{% if state.running %}<script>setTimeout(() => location.reload(), 3000);</script>{% endif %}
+<script>
+  // Keep the scroll position across the automatic refreshes while a run is going.
+  (() => {
+    const key = "url-redirects-scroll";
+    const saved = sessionStorage.getItem(key);
+    if (saved !== null) { sessionStorage.removeItem(key); window.addEventListener("load", () => window.scrollTo(0, +saved)); }
+    {% if state.running %}
+    setTimeout(() => { sessionStorage.setItem(key, String(window.scrollY)); location.reload(); }, 3000);
+    {% endif %}
+  })();
+</script>
 
 {% set SITUATION = {
   "create": "网站商品上有这个 SKU，还没有重定向",
@@ -71,12 +86,41 @@
   </span>
 </div>
 <p class="muted" style="margin-top:-4px;">系统重启后的第一次自动检查只看不改，之后每次都会自动修复。</p>
+
+{% set pg = state.progress %}
+{% if pg %}
+  {% set elapsed = (((pg.finished_at or pg.updated_at) - pg.started_at).total_seconds())|int %}
+  <div class="ur-progress {{ 'running' if state.running else '' }}">
+    {% if state.running %}
+      <b>⏳ {{ pg.phase }}…</b>
+      <span class="muted">（{{ "自动" if pg.auto else "手动" }}{{ "检查并修复" if pg.fix else "检查" }}，已运行 {{ elapsed }} 秒，最后更新 {{ pg.updated_at|dt8 }}，页面每 3 秒自动刷新）</span>
+    {% else %}
+      <b>{{ "✅ 上次运行完成" if pg.phase == "完成" else "⚠️ 上次运行出错" }}</b>
+      <span class="muted">（{{ pg.started_at|dt8 }}，用时 {{ elapsed }} 秒）</span>
+    {% endif %}
+    <ol class="ur-steps">
+      <li class="{{ 'now' if state.running and pg.redirects is none }}">读取网站上的商品：已读取 <b>{{ pg.variants }}</b> 个商品款式{% if pg.skus is defined %}，其中 <b>{{ pg.skus }}</b> 个不同的 SKU{% endif %}</li>
+      <li class="{{ 'now' if state.running and pg.redirects is not none and pg.to_fix is none and pg.phase != '修复中' }}">读取 URL 重定向：{% if pg.redirects is none %}<span class="muted">等待中</span>{% else %}已读取 <b>{{ pg.redirects }}</b> 条{% endif %}</li>
+      {% if pg.fix %}
+      <li class="{{ 'now' if state.running and pg.phase == '修复中' }}">修复：{% if pg.to_fix is none %}<span class="muted">等待中</span>{% else %}<b>{{ pg.done + pg.failed }}</b> / {{ pg.to_fix }}（成功 {{ pg.done }}{% if pg.failed %}，失败 {{ pg.failed }}{% endif %}）{% endif %}</li>
+      {% endif %}
+    </ol>
+    {% if state.running and pg.recent %}
+      <div class="muted" style="margin-top:4px;">刚刚处理：</div>
+      <ul class="ur-recent">
+        {% for c in pg.recent %}
+          <li>{{ "✓" if c.ok else "✗" }} {{ {"create": "创建", "update": "修改", "delete": "删除"}.get(c.action, c.action) }} <span class="ur-path">{{ c.path }}</span>{% if c.to %} → <span class="ur-path">{{ c.to }}</span>{% endif %}{% if not c.ok %} <span class="ur-msg bad">{{ c.message }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endif %}
 {% if state.last_error %}
   <p class="ur-delete-text">最近一次运行失败（下面是上次成功的结果）：{{ state.last_error }}</p>
 {% endif %}
 
 {% if not state.checked_at %}
-  <p class="muted">{{ "正在检查…" if state.running else "尚未检查。点“立即检查”。" }}</p>
+  <p class="muted">{{ "正在检查，结果会在读取完成后马上显示…" if state.running else "尚未检查。点“立即检查”。" }}</p>
 {% else %}
   <p class="ur-filter">
     ✅ <b>{{ state.ok_count }}</b> 个 SKU 重定向正常{% if all_rows %}；<b data-count="all">{{ all_rows|length }}</b> 个需要处理：

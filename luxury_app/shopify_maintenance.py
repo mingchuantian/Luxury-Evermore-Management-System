@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from pymongo.collection import Collection
@@ -111,6 +111,8 @@ class ShopifyTokenProvider:
         self._cached_token = ""
         self._refresh_at = 0.0
         self._lock = threading.Lock()
+        # Scopes Shopify reported for the current token (for diagnostics).
+        self.granted_scopes: List[str] = []
 
     @property
     def uses_client_credentials(self) -> bool:
@@ -244,6 +246,7 @@ class ShopifyTokenProvider:
                 expires_in = 86399
 
             refresh_skew = min(TOKEN_REFRESH_SKEW_SECONDS, max(30, expires_in // 10))
+            self.granted_scopes = sorted(granted_scopes)
             self._cached_token = access_token
             self._refresh_at = self.clock() + max(30, expires_in - refresh_skew)
             logger.info(
@@ -333,6 +336,10 @@ query MinForMongo($q: String!) {
 """
 
 
+def _graphql_errors_are_access_denied(errors) -> bool:
+    return any((error.get("extensions") or {}).get("code") == "ACCESS_DENIED" for error in errors or [])
+
+
 def _graphql_errors_are_throttled(errors) -> bool:
     for error in errors or []:
         extensions = error.get("extensions") or {}
@@ -411,6 +418,19 @@ def shopify_gql(
                     wait_seconds,
                 )
                 time.sleep(wait_seconds)
+                continue
+            if (
+                _graphql_errors_are_access_denied(errors)
+                and provider.uses_client_credentials
+                and not refreshed_after_unauthorized
+                and attempt < max_attempts
+            ):
+                # Permissions may have just been approved on the store: a
+                # cached token keeps the old scopes, so get a new one once.
+                provider.invalidate()
+                token = provider.get_token(force_refresh=True)
+                refreshed_after_unauthorized = True
+                logger.warning("Shopify denied access; refreshed the token once and retrying.")
                 continue
             raise RuntimeError(
                 "Shopify GraphQL errors:\n"

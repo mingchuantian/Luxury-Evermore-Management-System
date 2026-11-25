@@ -181,6 +181,54 @@ class RunTests(unittest.TestCase):
                                           "from": "/products/lv-speedy", "to": "/products/lv-speedy-1",
                                           "message": ""})
 
+    def test_progress_is_published_while_running(self):
+        shop = store()
+        seen = {}
+        reads = shop.__call__
+
+        def watching(query, variables, token_provider=None):
+            if "urlRedirects(" in query and "reading_redirects" not in seen:
+                seen["reading_redirects"] = ur.snapshot()
+            if "urlRedirectCreate" in query and "first_write" not in seen:
+                seen["first_write"] = ur.snapshot()
+            return reads(query, variables, token_provider)
+
+        ur.run(Items(SYSTEM), fix=True, gql=watching, provider=FakeProvider())
+        # While reading redirects: SKUs already counted, website states already usable.
+        reading = seen["reading_redirects"]
+        self.assertTrue(reading["running"])
+        self.assertEqual(reading["progress"]["phase"], "读取 Shopify 上的 URL 重定向")
+        self.assertEqual(reading["progress"]["variants"], 9)
+        self.assertIn("AAA1111", reading["website"])
+        # While fixing: the list is already on the page, with the plan's numbers.
+        writing = seen["first_write"]
+        self.assertEqual(writing["progress"]["phase"], "修复中")
+        self.assertEqual(writing["progress"]["to_fix"], 8)
+        self.assertEqual(len(writing["rows"]), 9)
+        # At the end.
+        done = ur.snapshot()
+        self.assertFalse(done["running"])
+        self.assertEqual((done["progress"]["phase"], done["progress"]["done"]), ("完成", 8))
+        self.assertEqual(len(done["progress"]["recent"]), 8)
+        self.assertIsNotNone(done["progress"]["finished_at"])
+
+    def test_page_shows_progress(self):
+        ur._reset_for_tests(running=True, progress={
+            "phase": "修复中", "fix": True, "auto": False,
+            "started_at": datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 11, 25, 8, 0, 42, tzinfo=timezone.utc), "finished_at": None,
+            "variants": 1234, "skus": 1200, "redirects": 980, "to_fix": 40, "done": 12, "failed": 1,
+            "recent": [{"sku": "AAA1111", "action": "create", "path": "/AAA1111", "from": "",
+                        "to": "/products/a", "message": "", "ok": True}]})
+        html = PageTests._client(self).get("/url-redirects").get_data(as_text=True)
+        self.assertIn("⏳ 修复中…", html)
+        self.assertIn("已运行 42 秒", html)
+        self.assertIn("已读取 <b>1234</b> 个商品款式，其中 <b>1200</b> 个不同的 SKU", html)
+        self.assertIn("已读取 <b>980</b> 条", html)
+        self.assertIn("<b>13</b> / 40（成功 12，失败 1）", html)
+        self.assertIn("刚刚处理", html)
+        self.assertIn("location.reload()", html)
+
     def test_failures_stay_listed(self):
         shop = store()
         shop.fail = {"/AAA1111": "Path has already been taken"}
@@ -196,10 +244,14 @@ class RunTests(unittest.TestCase):
         def denied(query, variables, token_provider=None):
             raise RuntimeError('Shopify GraphQL errors: [{"extensions": {"code": "ACCESS_DENIED"}}]')
 
-        ur.run(Items(SYSTEM), fix=True, gql=denied, provider=FakeProvider())
+        provider = FakeProvider()
+        provider.granted_scopes = ["write_files", "write_products"]
+        ur.run(Items(SYSTEM), fix=True, gql=denied, provider=provider)
         state = ur.snapshot()
         self.assertEqual(len(state["rows"]), 9)
         self.assertIn("online_store_navigation", state["last_error"])
+        self.assertIn("目前只有：write_files, write_products", state["last_error"])
+        self.assertIn("批准", state["last_error"])
 
     def test_fix_one(self):
         shop = store()
