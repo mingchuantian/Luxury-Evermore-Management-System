@@ -37,6 +37,28 @@
   .lm-job .lm-state { white-space: nowrap; font-weight: 600; }
   .lm-job.done .lm-state { color: #1f6b3a; }
   .lm-job.failed .lm-state { color: #b00020; }
+  .lm-tip { font-size: 13px; color: #52514e; background: #f4f3f0; border-radius: 8px; padding: 8px 10px; margin: 4px 0 8px; }
+  /* Photo viewer */
+  .lm-viewer { position: fixed; inset: 0; z-index: 1000; background: #000; color: #fff; display: flex; flex-direction: column; }
+  .lm-viewer[hidden] { display: none; }
+  .lm-v-top { display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 12px 8px; font-size: 14px; }
+  .lm-v-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d6d6d6; }
+  .lm-v-close { width: 40px; height: 40px; border-radius: 50%; border: 0; background: #2a2a2a; color: #fff; font-size: 22px; cursor: pointer; }
+  .lm-v-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .lm-v-stage img, .lm-v-stage video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .lm-v-stage img { cursor: zoom-in; }
+  .lm-v-stage.zoomed { display: block; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .lm-v-stage.zoomed img { max-width: none; max-height: none; cursor: zoom-out; }
+  .lm-v-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #bbb; font-size: 14px; text-align: center; pointer-events: none; }
+  .lm-v-msg a { pointer-events: auto; color: #fff; }
+  .lm-v-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 8px;
+                background: rgba(255,255,255,.12); color: #fff; font-size: 28px; cursor: pointer; }
+  .lm-v-arrow.prev { left: 10px; } .lm-v-arrow.next { right: 10px; }
+  .lm-v-arrow[hidden] { display: none; }
+  .lm-v-bar { display: flex; gap: 8px; padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .lm-v-bar .lm-btn { flex: 1; min-height: 46px; background: #2a2a2a; border-color: #444; color: #fff; }
+  .lm-v-bar .lm-btn.primary { background: #fff; border-color: #fff; color: #111; }
+  @media (pointer: coarse) { .lm-v-arrow { display: none; } }
   @media (max-width: 720px) {
     .lm-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .lm-btn { min-height: 42px; }
@@ -49,14 +71,24 @@ window.LEMedia = window.LEMedia || (() => {
     uploading: "Uploading", done: "Uploaded", failed: "Failed", waiting: "Waiting", retry: "Retry",
     network: "Network interrupted", leave: "Uploads are still running. Leave this page?",
     confirmDelete: name => `Delete ${name}? This cannot be undone.`, add: "+ Add", zip: "Download all (.zip)",
-    share: "Save to phone", sharing: "Preparing…", empty: "Nothing yet", files: n => `${n} file${n === 1 ? "" : "s"}`,
-    loadFailed: "Could not load media: ", shareFailed: "Could not share: ",
+    empty: "Nothing yet", files: n => `${n} file${n === 1 ? "" : "s"}`,
+    loadFailed: "Could not load media: ", shareFailed: "Could not save: ", prepareFailed: "Could not download: ",
+    saveAll: "Save all to Photos", save: "Save to Photos", preparing: "Preparing", ready: n => `✓ Ready — tap to save ${n}`,
+    batch: (i, n) => ` (batch ${i}/${n})`, nextBatch: (i, n) => `Save batch ${i}/${n}`, saved: "✓ Done",
+    noShareType: "This file type cannot be saved to Photos", download: "Download original",
+    original: "Full size", fit: "Fit screen", loadingOriginal: "Loading…", close: "Close",
+    noPreview: "No preview for this file.", tip: "Save to Photos: tap the button, then choose “Save Images” / “Save Video” in the menu.",
   } : {
     uploading: "上传中", done: "已上传", failed: "失败", waiting: "排队中", retry: "重试",
     network: "网络中断", leave: "还有文件在上传，确定离开吗？",
     confirmDelete: name => `确定删除 ${name}？删除后无法恢复。`, add: "+ 添加", zip: "全部下载（zip）",
-    share: "存到手机", sharing: "准备中…", empty: "还没有", files: n => `${n} 个`,
-    loadFailed: "读取媒体失败：", shareFailed: "分享失败：",
+    empty: "还没有", files: n => `${n} 个`,
+    loadFailed: "读取媒体失败：", shareFailed: "保存失败：", prepareFailed: "下载失败：",
+    saveAll: "全部存到相册", save: "存到相册", preparing: "准备中", ready: n => `✓ 准备好了，点这里保存 ${n} 个`,
+    batch: (i, n) => `（第 ${i}/${n} 批）`, nextBatch: (i, n) => `继续保存第 ${i}/${n} 批`, saved: "✓ 完成",
+    noShareType: "这种格式不能直接存进相册", download: "下载原文件",
+    original: "看原图", fit: "适应屏幕", loadingOriginal: "原图加载中…", close: "关闭",
+    noPreview: "这个文件无法预览。", tip: "存到相册：点按钮后，在弹出的菜单里选「存储图像」或「存储视频」。",
   };
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -193,6 +225,247 @@ window.LEMedia = window.LEMedia || (() => {
     });
   }
 
+  // ---------------------------------------------------------------- save to Photos
+  // Web pages cannot write to Photos directly; the iPhone share menu can ("Save Images").
+  // Files are downloaded first, then shared. If the phone says the tap is too old by then,
+  // the button turns into "ready — tap to save" and the next tap opens the menu at once.
+  const CAN_SHARE = (() => {
+    try { return !!(navigator.canShare && navigator.canShare({files: [new File(["x"], "x.jpg", {type: "image/jpeg"})]})); }
+    catch (_) { return false; }
+  })();
+  const TOUCH = window.matchMedia ? matchMedia("(pointer: coarse)").matches : false;
+  const BATCH_FILES = 20;
+  const BATCH_BYTES = 200 * 1024 * 1024;
+  const MAX_SHARE_BYTES = 1024 * 1024 * 1024;
+
+  function batchesOf(files) {
+    const out = [];
+    let current = [], bytes = 0;
+    for (const file of files) {
+      if (current.length && (current.length >= BATCH_FILES || bytes + file.size > BATCH_BYTES)) { out.push(current); current = []; bytes = 0; }
+      current.push(file);
+      bytes += file.size;
+    }
+    if (current.length) out.push(current);
+    return out;
+  }
+
+  async function fetchFiles(list, onStep) {
+    const result = new Array(list.length);
+    let next = 0, done = 0;
+    async function worker() {
+      while (next < list.length) {
+        const index = next++;
+        const file = list[index];
+        const response = await fetch(file.url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const type = file.mime && file.mime !== "application/octet-stream" ? file.mime : (blob.type || "image/jpeg");
+        result[index] = new File([blob], file.download_name || file.name, {type});
+        onStep(++done);
+      }
+    }
+    await Promise.all([worker(), worker(), worker()]);
+    return result;
+  }
+
+  function attachSaver(button, files) {
+    const idle = button.textContent;
+    const batches = batchesOf(files);
+    let index = 0, ready = null, busy = false;
+    const tag = () => batches.length > 1 ? T.batch(index + 1, batches.length) : "";
+
+    async function share() {
+      const list = ready;
+      try {
+        if (!navigator.canShare({files: list})) throw new Error(T.noShareType);
+        await navigator.share({files: list});
+        ready = null;
+        index += 1;
+        if (index < batches.length) button.textContent = T.nextBatch(index + 1, batches.length);
+        else { button.textContent = T.saved; index = 0; setTimeout(() => { if (!ready && !busy) button.textContent = idle; }, 4000); }
+      } catch (error) {
+        if (error.name === "NotAllowedError" || error.name === "AbortError") { button.textContent = T.ready(list.length) + tag(); return; }
+        ready = null;
+        button.textContent = idle;
+        alert(T.shareFailed + error.message);
+      }
+    }
+
+    button.addEventListener("click", async event => {
+      event.preventDefault();
+      if (busy) return;
+      if (ready) { await share(); return; }
+      const batch = batches[index];
+      busy = true; button.disabled = true;
+      try {
+        ready = await fetchFiles(batch, n => { button.textContent = `${T.preparing} ${n}/${batch.length}${tag()}`; });
+      } catch (error) {
+        button.textContent = idle;
+        alert(T.prepareFailed + error.message);
+        return;
+      } finally { busy = false; button.disabled = false; }
+      await share();
+    });
+  }
+
+  // ---------------------------------------------------------------- photo viewer
+  let viewer = null;
+
+  function buildViewer() {
+    const element = document.createElement("div");
+    element.className = "lm-viewer";
+    element.hidden = true;
+    element.innerHTML = `
+      <div class="lm-v-top"><span class="lm-v-count"></span><span class="lm-v-title"></span>
+        <button type="button" class="lm-v-close" aria-label="${T.close}">×</button></div>
+      <div class="lm-v-stage"></div>
+      <div class="lm-v-bar"></div>`;
+    document.body.appendChild(element);
+    const stage = element.querySelector(".lm-v-stage");
+    const bar = element.querySelector(".lm-v-bar");
+    const state = {list: [], index: 0, open: false};
+
+    function current() { return state.list[state.index]; }
+
+    function show() {
+      const file = current();
+      if (!file) return;
+      stage.classList.remove("zoomed");
+      stage.scrollTop = 0; stage.scrollLeft = 0;
+      element.querySelector(".lm-v-count").textContent = `${state.index + 1} / ${state.list.length}`;
+      element.querySelector(".lm-v-title").textContent = `${file.name} · ${size(file.size)}`;
+      const arrows = state.list.length > 1
+        ? `<button type="button" class="lm-v-arrow prev" ${state.index ? "" : "hidden"}>‹</button>
+           <button type="button" class="lm-v-arrow next" ${state.index < state.list.length - 1 ? "" : "hidden"}>›</button>` : "";
+      if (file.kind === "video") {
+        stage.innerHTML = `<video controls playsinline preload="metadata" poster="${file.thumb}" src="${file.url}"></video>${arrows}`;
+      } else {
+        stage.innerHTML = `<div class="lm-v-msg">${T.preparing}…</div><img alt="" src="${file.preview}">${arrows}`;
+        const img = stage.querySelector("img");
+        img.addEventListener("load", () => stage.querySelector(".lm-v-msg")?.remove());
+        img.addEventListener("error", () => {
+          if (stage.classList.contains("zoomed")) return;
+          img.remove();
+          const msg = stage.querySelector(".lm-v-msg");
+          if (msg) msg.innerHTML = `${T.noPreview}<br><br><a href="${file.download}">${T.download}</a>`;
+        });
+        // Warm up the neighbours so swiping feels instant.
+        [state.list[state.index + 1], state.list[state.index - 1]].forEach(other => {
+          if (other && other.kind !== "video") { const preload = new Image(); preload.src = other.preview; }
+        });
+      }
+      bar.innerHTML = "";
+      if (file.kind !== "video") {
+        const zoom = document.createElement("button");
+        zoom.type = "button"; zoom.className = "lm-btn lm-v-zoom"; zoom.textContent = T.original;
+        zoom.addEventListener("click", () => toggleZoom());
+        bar.appendChild(zoom);
+      }
+      if (CAN_SHARE && file.size <= MAX_SHARE_BYTES) {
+        const save = document.createElement("button");
+        save.type = "button"; save.className = "lm-btn primary"; save.textContent = T.save;
+        attachSaver(save, [file]);
+        bar.appendChild(save);
+      } else {
+        const link = document.createElement("a");
+        link.className = "lm-btn primary"; link.href = file.download; link.textContent = T.download;
+        bar.appendChild(link);
+      }
+    }
+
+    function toggleZoom(event) {
+      const file = current();
+      const img = stage.querySelector("img");
+      const button = bar.querySelector(".lm-v-zoom");
+      if (!img || !file) return;
+      if (stage.classList.contains("zoomed")) {
+        stage.classList.remove("zoomed");
+        img.src = file.preview;
+        if (button) button.textContent = T.original;
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const clamp = value => Math.min(1, Math.max(0, value));
+      const rx = event ? clamp((event.clientX - rect.left) / rect.width) : .5;
+      const ry = event ? clamp((event.clientY - rect.top) / rect.height) : .5;
+      if (button) button.textContent = T.loadingOriginal;
+      const zoomIn = source => {
+        img.src = source;
+        stage.classList.add("zoomed");
+        requestAnimationFrame(() => {
+          stage.scrollLeft = img.naturalWidth * rx - stage.clientWidth / 2;
+          stage.scrollTop = img.naturalHeight * ry - stage.clientHeight / 2;
+        });
+        if (button) button.textContent = T.fit;
+      };
+      // The untouched original; formats the browser cannot show (e.g. HEIC on a PC) fall back to the large preview.
+      const full = new Image();
+      full.onload = () => { if (current() === file) zoomIn(full.src); };
+      full.onerror = () => { if (current() === file) zoomIn(file.preview); };
+      full.src = file.url;
+    }
+
+    function go(step) {
+      const target = state.index + step;
+      if (target < 0 || target >= state.list.length) return;
+      stage.querySelector("video")?.pause();
+      state.index = target;
+      show();
+    }
+
+    function close(fromHistory) {
+      if (!state.open) return;
+      state.open = false;
+      stage.querySelector("video")?.pause();
+      stage.innerHTML = "";
+      element.hidden = true;
+      document.documentElement.style.overflow = "";
+      if (!fromHistory && history.state && history.state.lmViewer) history.back();
+    }
+
+    element.querySelector(".lm-v-close").addEventListener("click", () => close(false));
+    stage.addEventListener("click", event => {
+      if (event.target.closest(".lm-v-arrow.prev")) return go(-1);
+      if (event.target.closest(".lm-v-arrow.next")) return go(1);
+      if (swiped) { swiped = false; return; }
+      if (event.target.tagName === "IMG") toggleZoom(event);
+    });
+    let startX = 0, startY = 0, swiped = false;
+    stage.addEventListener("touchstart", event => {
+      if (event.touches.length !== 1) { startX = NaN; return; }
+      startX = event.touches[0].clientX; startY = event.touches[0].clientY; swiped = false;
+    }, {passive: true});
+    stage.addEventListener("touchend", event => {
+      if (stage.classList.contains("zoomed") || Number.isNaN(startX)) return;
+      const dx = event.changedTouches[0].clientX - startX;
+      const dy = event.changedTouches[0].clientY - startY;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; go(dx < 0 ? 1 : -1); }
+    }, {passive: true});
+    document.addEventListener("keydown", event => {
+      if (!state.open) return;
+      if (event.key === "Escape") close(false);
+      else if (event.key === "ArrowRight") go(1);
+      else if (event.key === "ArrowLeft") go(-1);
+    });
+    window.addEventListener("popstate", () => close(true));
+
+    return {
+      open(list, index) {
+        state.list = list; state.index = index; state.open = true;
+        element.hidden = false;
+        document.documentElement.style.overflow = "hidden";
+        if (!(history.state && history.state.lmViewer)) history.pushState({lmViewer: true}, "");
+        show();
+      },
+    };
+  }
+
+  function openViewer(list, index) {
+    if (!viewer) viewer = buildViewer();
+    viewer.open(list, index);
+  }
+
   // ---------------------------------------------------------------- manager
   function mountManager(root) {
     const base = root.dataset.base;
@@ -201,19 +474,20 @@ window.LEMedia = window.LEMedia || (() => {
     async function load() {
       try {
         const data = await api(`${base}/list`);
-        body.innerHTML = data.categories.map(cat => `
+        data.categories.forEach(cat => cat.files.forEach(file => { file.kind = cat.kind; }));
+        body.innerHTML = (CAN_SHARE ? `<div class="lm-tip">${escapeHtml(T.tip)}</div>` : "") + data.categories.map(cat => `
           <section class="lm-cat" data-category="${cat.category}">
             <div class="lm-cat-head">
               <h4>${escapeHtml(cat.label)} <span class="lm-count">${T.files(cat.files.length)}${cat.files.length ? " · " + size(cat.total_bytes) : ""}</span></h4>
               <label class="lm-btn">${T.add}<input type="file" hidden multiple accept="${cat.kind === "video" ? "video/*" : "image/*"}"
                      data-add="${cat.category}" data-label="${escapeHtml(cat.label)}"></label>
-              ${cat.bulk && cat.files.length ? `
-                <a class="lm-btn" href="${base}/zip/${cat.category}">${T.zip}</a>
-                ${navigator.canShare ? `<button type="button" class="lm-btn" data-share="${cat.category}">${T.share}</button>` : ""}` : ""}
+              ${CAN_SHARE && cat.kind === "image" && cat.files.length > 1
+                ? `<button type="button" class="lm-btn primary" data-save-all="${cat.category}">${T.saveAll}</button>` : ""}
+              ${cat.bulk && cat.files.length && !TOUCH ? `<a class="lm-btn" href="${base}/zip/${cat.category}">${T.zip}</a>` : ""}
             </div>
-            ${cat.files.length ? `<div class="lm-grid">${cat.files.map(file => `
+            ${cat.files.length ? `<div class="lm-grid">${cat.files.map((file, index) => `
               <div class="lm-tile">
-                <a href="${file.url}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(file.name)}">
+                <a href="${file.preview}" data-open="${cat.category}" data-index="${index}" title="${escapeHtml(file.name)}">
                   <img src="${file.thumb}" alt="" loading="lazy" data-name="${escapeHtml(file.name)}">
                 </a>
                 ${cat.kind === "video" ? '<span class="lm-play">▶</span>' : ""}
@@ -222,6 +496,10 @@ window.LEMedia = window.LEMedia || (() => {
               </div>`).join("")}</div>` : `<div class="lm-empty">${T.empty}</div>`}
           </section>`).join("");
         root._data = data;
+        body.querySelectorAll("[data-save-all]").forEach(button => {
+          const cat = data.categories.find(c => c.category === button.dataset.saveAll);
+          if (cat) attachSaver(button, cat.files);
+        });
       } catch (error) {
         body.innerHTML = `<div class="lm-error">${escapeHtml(T.loadFailed + error.message)}</div>`;
       }
@@ -254,22 +532,11 @@ window.LEMedia = window.LEMedia || (() => {
         catch (error) { del.disabled = false; alert(error.message); }
         return;
       }
-      const share = event.target.closest("[data-share]");
-      if (share) {
-        const cat = (root._data?.categories || []).find(c => c.category === share.dataset.share);
-        if (!cat) return;
-        const label = share.textContent;
-        share.disabled = true; share.textContent = T.sharing;
-        try {
-          const files = await Promise.all(cat.files.map(async file => {
-            const blob = await (await fetch(file.url)).blob();
-            return new File([blob], file.download_name, {type: blob.type || "image/jpeg"});
-          }));
-          if (navigator.canShare && navigator.canShare({files})) await navigator.share({files});
-          else throw new Error("not supported");
-        } catch (error) {
-          if (error.name !== "AbortError") alert(T.shareFailed + error.message);
-        } finally { share.disabled = false; share.textContent = label; }
+      const opener = event.target.closest("[data-open]");
+      if (opener) {
+        event.preventDefault();
+        const cat = (root._data?.categories || []).find(c => c.category === opener.dataset.open);
+        if (cat) openViewer(cat.files, Number(opener.dataset.index) || 0);
       }
     });
 

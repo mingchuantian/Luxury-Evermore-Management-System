@@ -18,6 +18,10 @@
   "detail_raw": "Detail photos (original)" if english else "细节图（原始）",
   "video": "Videos" if english else "视频",
   "count": "taken this time" if english else "本次已拍",
+  "album_hint": "Need zoom (0.5×/2×/3×), focus or exposure? Shoot with the phone's Camera app, then pick several at once from Photos:" if english else "想用 0.5×/2×/3× 镜头、调对焦和曝光？先用手机自带相机拍，再从相册一次选多张上传：",
+  "album_main": "Main photo" if english else "首图",
+  "album_detail": "Detail photos" if english else "细节图",
+  "album_video": "Videos" if english else "视频",
 } %}
 {{ media_assets(english) }}
 <style>
@@ -33,6 +37,10 @@
   .mi-tile .mi-icon { font-size: 30px; line-height: 1; }
   .mi-tile:active { transform: scale(.98); background: #f4f3f0; }
   .mi-tile.on { border: 2px solid #1f2325; }
+  .mi-album { margin: 4px 0 12px; padding: 10px 12px; border: 1px dashed #cfcdc7; border-radius: 12px; background: #fbfaf8; }
+  .mi-album .lm-note { margin-bottom: 8px; }
+  .mi-album-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .mi-album-btns .lm-btn { min-height: 44px; }
   .mi-again { position: sticky; bottom: 0; z-index: 5; display: none; gap: 8px; padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
               background: linear-gradient(to top, var(--bg, #f6f5f2) 70%, transparent); }
   .mi-again.show { display: flex; }
@@ -69,6 +77,15 @@
       <label class="mi-tile" data-shoot="video"><span class="mi-icon">🎬</span>{{ T.shoot_video }}
         <input type="file" accept="video/*" capture="environment" hidden data-category="video" data-label="{{ T.video }}"></label>
       <button type="button" class="mi-tile" id="mi-manage-toggle"><span class="mi-icon">🗂️</span>{{ T.manage }}</button>
+    </div>
+
+    <div class="mi-album">
+      <div class="lm-note">{{ T.album_hint }}</div>
+      <div class="mi-album-btns">
+        <label class="lm-btn">🖼️ {{ T.album_main }}<input type="file" accept="image/*" multiple hidden data-album="main_raw" data-label="{{ T.main_raw }}"></label>
+        <label class="lm-btn">🖼️ {{ T.album_detail }}<input type="file" accept="image/*" multiple hidden data-album="detail_raw" data-label="{{ T.detail_raw }}"></label>
+        <label class="lm-btn">🎞️ {{ T.album_video }}<input type="file" accept="video/*" multiple hidden data-album="video" data-label="{{ T.video }}"></label>
+      </div>
     </div>
 
     <div class="lm-queue"></div>
@@ -123,6 +140,11 @@
 
   document.querySelectorAll(".mi-tile input[type=file]").forEach(input => input.addEventListener("change", () => shot(input)));
   againInput.addEventListener("change", () => shot(againInput));
+  document.querySelectorAll("input[data-album]").forEach(input => input.addEventListener("change", () => {
+    if (!input.files.length) return;
+    LEMedia.enqueue(base, input.dataset.album, input.dataset.label, Array.from(input.files));
+    input.value = "";
+  }));
   document.getElementById("mi-finish").addEventListener("click", () => again.classList.remove("show"));
 
   const manage = document.getElementById("mi-manage");

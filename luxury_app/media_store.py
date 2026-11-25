@@ -48,6 +48,9 @@ UPLOAD_URL_SECONDS = 6 * 3600              # slow mobile networks + long videos
 VIEW_URL_SECONDS = 2 * 3600
 THUMB_PROCESS = "image/resize,m_lfit,w_480,h_480/auto-orient,1/quality,q_80/format,jpg"
 VIDEO_THUMB_PROCESS = "video/snapshot,t_1000,f_jpg,w_480,m_fast"
+# Large view in the photo viewer: quick to load, sharp on a phone screen.
+# The viewer can still switch to the untouched original.
+PREVIEW_PROCESS = "image/resize,m_lfit,w_2048,h_2048/auto-orient,1/quality,q_90/format,jpg"
 
 SKU_RE = re.compile(r"^[A-Z0-9_-]{2,64}$")
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -58,6 +61,19 @@ _EXT_BY_TYPE = {
 }
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".dng"}
 _VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".3gp", ".hevc"}
+
+
+_TYPE_BY_EXT = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".heic": "image/heic",
+    ".heif": "image/heif", ".webp": "image/webp", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".dng": "image/x-adobe-dng", ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".webm": "video/webm", ".3gp": "video/3gpp",
+}
+
+
+def mime_for(key: str) -> str:
+    """Media type from the file extension (what the phone needs to save it to Photos)."""
+    return _TYPE_BY_EXT.get(os.path.splitext(key)[1].lower(), "application/octet-stream")
 
 
 class MediaNotConfigured(RuntimeError):
@@ -258,6 +274,8 @@ def list_media(store, sku: str, english: bool = False) -> Dict[str, Any]:
                 if obj.get("last_modified") else "",
                 "url": store.get_url(obj["key"]),
                 "thumb": store.get_url(obj["key"], THUMB_PROCESS if kind == "image" else VIDEO_THUMB_PROCESS),
+                "preview": store.get_url(obj["key"], PREVIEW_PROCESS) if kind == "image" else store.get_url(obj["key"]),
+                "mime": mime_for(obj["key"]),
                 "download": store.get_url(obj["key"], attachment_name=download_name(sku, key, index, obj["key"])),
                 "download_name": download_name(sku, key, index, obj["key"]),
             })
