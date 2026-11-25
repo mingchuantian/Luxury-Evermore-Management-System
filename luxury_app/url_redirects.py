@@ -15,9 +15,12 @@ inventory. Every SKU found is “on the website”.
   products with the same SKU is a conflict: listed, never changed automatically.
 - A “/SKU” redirect whose SKU was not found in the scan is no longer used
   (SKU changed or removed, product deleted) → it is deleted.
-- Only “/SKU” redirects are managed: the path is a SKU of this system, or has
-  the SKU shape (7 or 9 characters of the SKU alphabet) and points to a product
-  page. Every other redirect (pages, collections, old URLs…) is left alone.
+- Only current-style SKUs count: exactly 7 letters/digits. Old-style SKUs
+  (any other length or with other characters) are ignored completely, on the
+  products and in the redirects.
+- Only “/SKU” redirects are managed: the path is a 7-character SKU that is in
+  this system or points to a product page. Every other redirect (pages,
+  collections, old URLs, old-style SKUs…) is left alone.
 
 The same scan also says, per SKU, what the website shows (website_state):
 selling (Active, can be bought), zero (Active, inventory 0), draft, archived.
@@ -50,8 +53,13 @@ RECENT_CHANGES_LIMIT = 300
 
 # What a row asks for. "conflict" is never applied automatically.
 ACTIONS = ("create", "update", "delete", "conflict")
-# What a SKU from this system's generator looks like (utils._short_code: no I O 0 1).
-SKU_SHAPE = re.compile(r"^[A-HJ-NP-Z2-9]{7}([A-HJ-NP-Z2-9]{2})?$")
+# The SKUs in use now: exactly 7 letters/digits. Everything else is an old style
+# and is ignored.
+SKU_SHAPE = re.compile(r"^[A-Z0-9]{7}$")
+
+
+def is_current_sku(sku: str) -> bool:
+    return bool(SKU_SHAPE.match((sku or "").strip().upper()))
 WEBSITE_STATES = ("selling", "zero", "draft", "archived")
 WEBSITE_LABELS = {"selling": "网站在售", "zero": "网站上架·库存0", "draft": "网站草稿", "archived": "网站已归档"}
 ACTION_ORDER = {action: index for index, action in enumerate(ACTIONS)}
@@ -172,7 +180,7 @@ def _system_skus(items) -> set:
     return {
         (doc.get("sku") or "").strip().upper()
         for doc in items.find({}, {"_id": 0, "sku": 1})
-        if (doc.get("sku") or "").strip()
+        if is_current_sku(doc.get("sku"))
     }
 
 
@@ -200,7 +208,7 @@ def website_states(variants) -> Dict[str, Dict[str, Any]]:
     result: Dict[str, Dict[str, Any]] = {}
     for variant in variants:
         sku = (variant.get("sku") or "").strip().upper()
-        if not sku:
+        if not is_current_sku(sku):
             continue
         info = _product_info(variant.get("product") or {})
         if info["status"] == "ACTIVE":
@@ -216,7 +224,7 @@ def website_states(variants) -> Dict[str, Dict[str, Any]]:
 
 def _managed(key: str, target: str, system: set) -> bool:
     """Is this a “/SKU” redirect (ours), as opposed to any other redirect?"""
-    return key in system or bool(SKU_SHAPE.match(key) and _target_handle(target))
+    return is_current_sku(key) and (key in system or bool(_target_handle(target)))
 
 
 def plan(items, *, gql: Optional[Callable] = None, provider=None, variants=None, on_redirect_page=None):
@@ -238,6 +246,8 @@ def plan(items, *, gql: Optional[Callable] = None, provider=None, variants=None,
         product = variant.get("product") or {}
         info = _product_info(product)
         sku = (variant.get("sku") or "").strip().upper()
+        if not is_current_sku(sku):
+            sku = ""   # old-style SKU: ignored
         if info["handle"]:
             skus_by_handle.setdefault(info["handle"], set())
             if sku:

@@ -67,9 +67,11 @@ created redirects once and never repaired them):
   to that product (the Active one if several products carry the SKU; two
   Active products with the same SKU are listed as a conflict and not touched).
 - A `/<SKU>` redirect whose SKU was not found in the scan is deleted.
-- Only `/<SKU>` redirects are touched: the path is a SKU of this system, or has
-  the SKU shape (7 or 9 characters of the SKU alphabet) and points to a product
-  page. Pages, collections and other redirects are never changed.
+- Only current 7-character SKUs (letters/digits) count. Old-style SKUs, on
+  products or in redirects, are ignored completely.
+- Only `/<SKU>` redirects are touched: the path is a 7-character SKU that is in
+  this system or points to a product page. Pages, collections, old-style SKUs
+  and other redirects are never changed.
 - The first check after the app starts only looks (no changes); later hourly
   runs fix automatically. The Admin page **URL重定向管理** shows what needs
   doing and has "立即检查（只看不改）", "立即检查并修复全部" and per-row buttons.

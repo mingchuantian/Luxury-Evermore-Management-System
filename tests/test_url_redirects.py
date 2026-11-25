@@ -72,6 +72,8 @@ def store():
             variant("EEE5555", "gucci-a"), variant("EEE5555", "gucci-b"),   # two active → conflict
             variant("ZZZ9999", "prada-x"),                             # on Shopify, not in the system
             variant("HHH8888", "fendi-new"),                           # SKU fixed from GGG7777 to HHH8888
+            variant("LE-000123", "old-style"),                         # old-style SKU: ignored
+            variant("ABCD12", "six-chars"),                            # not 7 characters: ignored
         ],
         redirects=[
             redirect(1, "/BBB2222", "/products/lv-speedy"),            # points to the drafted original
@@ -80,7 +82,8 @@ def store():
             redirect(4, "/FFF6666", "/products/deleted-bag"),          # SKU not on the website → delete
             redirect(5, "/GGG7777", "/products/fendi-new"),            # old SKU → now another bag's page
             redirect(6, "/about-us", "/pages/about"),                  # not ours
-            redirect(7, "/QQQ0000", "/products/fendi-new"),            # 0 is not in the SKU alphabet → not ours
+            redirect(7, "/LE-000123", "/products/somewhere"),          # old-style SKU → never touched
+            redirect(10, "/ABCD12", "/products/fendi-new"),            # 6 characters → never touched
             redirect(8, "/KKK2345", "/products/old-bag"),               # SKU shape + product page → ours, unused → delete
             redirect(9, "/WALLETS", "/collections/wallets"),           # SKU shape but a collection → not ours
         ],
@@ -122,6 +125,7 @@ class PlanTests(unittest.TestCase):
             variant("DDD4444", "d", status="ARCHIVED"),
             variant("EEE5555", "e-old", status="DRAFT"), variant("EEE5555", "e-new"),   # active copy wins
             dict(variant("FFF6666", "f"), inventoryQuantity=0, inventoryItem={"tracked": False}),
+            variant("OLD-STYLE-1", "g"),
         ]
         states = {sku: info["state"] for sku, info in ur.website_states(variants).items()}
         self.assertEqual(states, {"AAA1111": "selling", "BBB2222": "zero", "CCC3333": "draft",
@@ -198,13 +202,14 @@ class RunTests(unittest.TestCase):
         reading = seen["reading_redirects"]
         self.assertTrue(reading["running"])
         self.assertEqual(reading["progress"]["phase"], "读取 Shopify 上的 URL 重定向")
-        self.assertEqual(reading["progress"]["variants"], 9)
+        self.assertEqual(reading["progress"]["variants"], 11)
         self.assertIn("AAA1111", reading["website"])
         # While fixing: the list is already on the page, with the plan's numbers.
         writing = seen["first_write"]
         self.assertEqual(writing["progress"]["phase"], "修复中")
         self.assertEqual(writing["progress"]["to_fix"], 8)
         self.assertEqual(len(writing["rows"]), 9)
+        self.assertEqual(reading["progress"]["skus"], 7)   # the 2 old-style SKUs are not counted
         # At the end.
         done = ur.snapshot()
         self.assertFalse(done["running"])
@@ -327,7 +332,7 @@ class ItemListWebsiteStateTests(unittest.TestCase):
         now = datetime(2026, 11, 1, tzinfo=timezone.utc)
         self.db.items.insert_many([{"sku": sku, "name": "bag", "brand": "Chanel", "status": "ON_SHELF",
                                     "created_at": now, "purchase_at": now} for sku in
-                                   ("AAA1111", "BBB2222", "CCC3333", "DDD4444", "NOT0NWEB")])
+                                   ("AAA1111", "BBB2222", "CCC3333", "DDD4444", "NOTONWB", "OLD-0001")])
         ur._reset_for_tests()
         ur.run(Items([]), fix=False, provider=FakeProvider(), gql=FakeShopify(
             variants=[variant("AAA1111", "a"), dict(variant("BBB2222", "b"), inventoryQuantity=0),
@@ -351,13 +356,15 @@ class ItemListWebsiteStateTests(unittest.TestCase):
         import re
         html = self.client.get("/items" + query).get_data(as_text=True)
         body = html.split("</thead>", 1)[-1].split("</table>", 1)[0]
-        return html, sorted(set(re.findall(r"\b([A-Z0-9]{7,8})\b", body)) & {
-            "AAA1111", "BBB2222", "CCC3333", "DDD4444", "NOT0NWEB"})
+        return html, sorted(set(re.findall(r"\b([A-Z0-9]{7}|OLD-0001)\b", body)) & {
+            "AAA1111", "BBB2222", "CCC3333", "DDD4444", "NOTONWB", "OLD-0001"})
 
     def test_badges(self):
         html, _ = self._rows()
         for label in ("网站在售", "网站上架·库存0", "网站草稿", "网站已归档", "不在网站上"):
             self.assertIn(label, html)
+        old_row = html.split("OLD-0001", 1)[1].split("</td>", 1)[0]
+        self.assertNotIn("网站", old_row)               # old-style SKU: no website badge
         self.assertIn('class="web-badge web-zero"', html)
 
     def test_filter(self):
@@ -366,7 +373,7 @@ class ItemListWebsiteStateTests(unittest.TestCase):
         self.assertEqual(self._rows("?web=draft")[1], ["CCC3333"])
         self.assertEqual(self._rows("?web=any")[1], ["AAA1111", "BBB2222", "CCC3333", "DDD4444"])
         html, rows = self._rows("?web=none")
-        self.assertEqual(rows, ["NOT0NWEB"])
+        self.assertEqual(rows, ["NOTONWB"])              # the old-style SKU is left out
         self.assertIn('<option value="none" selected>', html)
         self.assertEqual(self._rows("?web=none&q=AAA")[1], [])
 

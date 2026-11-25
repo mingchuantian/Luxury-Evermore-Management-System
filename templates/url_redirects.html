@@ -60,7 +60,7 @@
   标签上的二维码会打开 <span class="ur-path">网站/SKU</span>，靠 Shopify 的 URL 重定向跳到商品页。
   系统每次扫描网站上<b>所有</b>商品（上架、草稿、归档，不管库存多少）：写了 SKU 的，保证 <span class="ur-path">/SKU</span> 指向这个商品
   （多个商品写了同一个 SKU 时以“上架”的为准；商品是草稿时扫码会是 404）；这次没扫到的 SKU，它的重定向会被删除。
-  只管 <span class="ur-path">/SKU</span> 这种重定向，其他重定向（页面、分类、旧网址等）一概不碰。结果不保存到数据库。
+  只看现在用的 <b>7 位 SKU</b>，旧样式的 SKU 一律忽略。只管 <span class="ur-path">/SKU</span> 这种重定向，其他重定向（页面、分类、旧网址、旧样式 SKU 等）一概不碰。结果不保存到数据库。
 </p>
 
 <table class="ur-legend" style="margin-bottom:12px;">

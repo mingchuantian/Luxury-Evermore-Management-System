@@ -88,7 +88,7 @@ WEB_FILTERS = {
     "zero": "网站上架但库存为 0",
     "draft": "网站草稿",
     "archived": "网站已归档",
-    "none": "不在网站上（Shopify 没有这个 SKU）",
+    "none": "不在网站上（Shopify 没有这个 SKU，只看 7 位 SKU）",
 }
 
 
@@ -302,7 +302,9 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             filt["status"] = status
         if web:
             on_site = [sku for sku, info in website.items() if web == "any" or info["state"] == web]
-            sku_rule = {"$nin": list(website)} if web == "none" else {"$in": on_site}
+            # “不在网站上” only means current 7-character SKUs; old-style ones are ignored.
+            sku_rule = ({"$nin": list(website), "$regex": "^[A-Za-z0-9]{7}$"} if web == "none"
+                        else {"$in": on_site})
             if "sku" in filt:
                 filt["$and"] = [{"sku": filt.pop("sku")}, {"sku": sku_rule}]
             else:

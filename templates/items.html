@@ -190,7 +190,7 @@
       {% if w %}
         <div><a class="web-badge web-{{ w.state }}" href="{{ w.admin_url or w.storefront_url }}" target="_blank" rel="noopener noreferrer"
                 title="{{ w.title }}">{{ WEBSITE_LABELS[w.state] }}</a></div>
-      {% elif website_scanned_at %}
+      {% elif website_scanned_at and (it.sku or "")|length == 7 %}
         <div class="muted" style="font-size:12px;">不在网站上</div>
       {% elif it.shopify_sku_exist %}
         <div class="muted">已连接Shopify</div>
