@@ -16,8 +16,32 @@ excluded. By default, a complete synchronization runs every hour.
    redundant `read_products` entry from the issued token's scope list.
    The "修改 SKU" button on the Shopify库存更新 page changes a variant's SKU
    through `productVariantsBulkUpdate`, so it needs `write_products`
-   (`read_products` alone is not enough). After changing scopes, release a new
-   app version and re-approve it on the store.
+   (`read_products` alone is not enough).
+   For URL redirects (reading them, and bulk creating / updating / importing
+   them through `urlRedirectCreate`, `urlRedirectUpdate`,
+   `urlRedirectImportCreate` + `urlRedirectImportSubmit`), add
+   `read_online_store_navigation` and `write_online_store_navigation`.
+   After changing scopes, release a new app version and re-approve it on the
+   store, then restart the app so it fetches a new token with the new scopes.
+
+   Current scope list (as of 2026-11-25):
+
+   | Scope | Used for |
+   |---|---|
+   | `write_products` (covers `read_products`) | product lookup, hourly SKU sync, "修改 SKU" |
+   | `write_files` | bulk Content image uploader |
+   | `read_inventory`, `write_inventory` | set Shopify inventory to 0 when an item is sold; 已无同款 button |
+   | `read_online_store_navigation`, `write_online_store_navigation` | URL redirects |
+
+   To see what the live token actually has, run this on the server in the
+   project folder (read-only; changes nothing):
+
+   ```bash
+   python3 check_shopify_access.py
+   ```
+
+   It lists the granted scopes, marks any the system needs but lacks, and
+   reads the first few URL redirects as a test.
 3. Release the app configuration and install the app on the store.
 4. Copy the Client ID and Client secret from the app's Settings page.
 
@@ -30,6 +54,40 @@ same organization's stores. Merely being the store owner or installing an app
 created under a different Partner/Dev Dashboard organization is not sufficient.
 In that topology, the app must use Shopify's authorization-code installation
 flow instead of the client-credentials grant.
+
+## URL重定向管理 (QR codes → product pages)
+
+Each label's QR code opens `https://<store>/<SKU>`; a Shopify URL redirect
+`/<SKU> → /products/<handle>` turns that into the product page. The system
+manages these redirects itself (this replaces the old Shopify Flow, which only
+created redirects once and never repaired them):
+
+- Every hour it scans every product variant on Shopify (Active, Draft,
+  Archived; any inventory). For every SKU found it makes sure `/<SKU>` points
+  to that product (the Active one if several products carry the SKU; two
+  Active products with the same SKU are listed as a conflict and not touched).
+- A `/<SKU>` redirect whose SKU was not found in the scan is deleted.
+- Only `/<SKU>` redirects are touched: the path is a SKU of this system, or has
+  the SKU shape (7 or 9 characters of the SKU alphabet) and points to a product
+  page. Pages, collections and other redirects are never changed.
+- The first check after the app starts only looks (no changes); later hourly
+  runs fix automatically. The Admin page **URL重定向管理** shows what needs
+  doing and has "立即检查（只看不改）", "立即检查并修复全部" and per-row buttons.
+- Nothing is stored in MongoDB; results live in memory. The same scan also
+  gives the 网站状态 shown in 库存列表 (网站在售 / 网站上架·库存0 / 网站草稿 /
+  网站已归档 / 不在网站上) and its filter.
+
+Needs `read_online_store_navigation` + `write_online_store_navigation`.
+Turn off the old Shopify Flow once the page looks right, so only one thing
+manages these redirects.
+
+Optional environment variables:
+
+```text
+URL_REDIRECT_ENABLED=true        # false = no background checks at all
+URL_REDIRECT_AUTO_FIX=true       # false = hourly runs only check, fixes are manual
+URL_REDIRECT_INTERVAL_HOURS=1
+```
 
 ## Cloud environment variables
 

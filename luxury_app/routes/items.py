@@ -40,6 +40,7 @@ from receipt_template.receipt_generation import generate_receipt_docx_bytes
 from .sales import _sync_sold_to_shopify
 from ..auth import ROLE_ADMIN
 from ..inventory_scan_history import scan_history_for_skus, scanned_in_both
+from ..url_redirects import WEBSITE_LABELS, website_snapshot
 from ..claude_analytics import norm_ccy
 from .. import shopify_maintenance
 
@@ -78,6 +79,17 @@ def _cost_in_sgd(doc):
     if currency is None:
         return None
     return cost * SORT_TO_SGD[currency]
+
+
+# ---------------- 网站状态筛选（来自每小时的 Shopify 全量扫描，只在内存里） ----------------
+WEB_FILTERS = {
+    "any": "在网站上（任何状态）",
+    "selling": "网站在售（上架且有库存）",
+    "zero": "网站上架但库存为 0",
+    "draft": "网站草稿",
+    "archived": "网站已归档",
+    "none": "不在网站上（Shopify 没有这个 SKU）",
+}
 
 
 # ---------------- 状态筛选：已到货/上架 但未出现在最近一次盘库 ----------------
@@ -253,6 +265,11 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
         sort = request.args.get("sort", "").strip()
         if sort not in LIST_SORTS:
             sort = ""
+        # 网站状态: from the latest hourly scan of every Shopify SKU (memory only).
+        website, website_scanned_at = website_snapshot()
+        web = request.args.get("web", "").strip()
+        if web not in WEB_FILTERS or not website_scanned_at:
+            web = ""
 
         # pagination (cap at 1000 per page)
         try:
@@ -283,6 +300,13 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
                 status = ""
         elif status:
             filt["status"] = status
+        if web:
+            on_site = [sku for sku, info in website.items() if web == "any" or info["state"] == web]
+            sku_rule = {"$nin": list(website)} if web == "none" else {"$in": on_site}
+            if "sku" in filt:
+                filt["$and"] = [{"sku": filt.pop("sku")}, {"sku": sku_rule}]
+            else:
+                filt["sku"] = sku_rule
         if source_type:
             filt["source_type"] = source_type
         if ownership in VALID_OWNERSHIPS:
@@ -360,6 +384,11 @@ def register(app, items, audit_logs=None, inventory_check_sessions=None):
             shopify_sync=_shopify_sync_info(),
             scan_latest=scan_latest,
             last_checks=last_checks,
+            website=website,
+            website_scanned_at=website_scanned_at,
+            web=web,
+            WEB_FILTERS=WEB_FILTERS,
+            WEBSITE_LABELS=WEBSITE_LABELS,
             both_rows=both_rows,
             NOT_IN_LAST_CHECK=NOT_IN_LAST_CHECK,
             items=docs,

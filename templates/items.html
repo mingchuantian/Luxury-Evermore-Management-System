@@ -31,6 +31,11 @@
   .sync-status { margin: 6px 0 12px; padding: 8px 12px; border-radius: 6px; background: #eefbf3; color: #166534; border: 1px solid #bbe5c8; }
   .sync-status.bad { background: #ffeef0; color: #b00020; border-color: #f5c2c7; font-weight: 700; }
   .last-check-note { margin:10px 0; padding:10px 14px; border:1px solid #e3c56b; background:#fff8e1; border-radius:6px; font-size:14px; }
+  .web-badge { display:inline-block; margin-top:2px; padding:0 6px; border-radius:8px; font-size:12px; font-weight:700; text-decoration:none; white-space:nowrap; }
+  .web-selling { background:#e6f4ea; color:#1f6b3a; }
+  .web-zero { background:#fff4e0; color:#b45309; }
+  .web-draft { background:#eef0f3; color:#52514e; }
+  .web-archived { background:#f3e8ff; color:#7e22ce; }
   .both-pointer { margin-top:6px; color:#8a6100; }
   .check-live { display:inline-block; padding:0 6px; border-radius:8px; background:#e8f0fe; color:#1f4f7a; font-size:12px; font-weight:700; }
   .last-check-note ul { margin:6px 0; padding-left:20px; }
@@ -58,7 +63,7 @@
   {% endif %}
 {% endif %}
 
-{% set keep = {"q": q or None, "status": status or None, "source_type": source_type or None, "ownership": ownership or None} %}
+{% set keep = {"q": q or None, "status": status or None, "source_type": source_type or None, "ownership": ownership or None, "web": web or None} %}
 <form method="get" action="{{ url_for('list_items') }}">
   <input type="hidden" name="page" value="1">
   {% if sort %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
@@ -90,6 +95,15 @@
         <option value="CONSIGNMENT" {% if source_type=="CONSIGNMENT" %}selected{% endif %}>寄卖</option>
       </select>
     </div>
+    {% if website_scanned_at %}
+    <div>
+      <label>网站状态 <span class="muted" style="font-weight:400;">（{{ website_scanned_at|dt8 }} 扫描）</span></label>
+      <select name="web" onchange="this.form.submit()">
+        <option value="">（全部）</option>
+        {% for key, label in WEB_FILTERS.items() %}<option value="{{ key }}" {% if web==key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
     <div>
       <label>Ownership 筛选</label>
       <select name="ownership" onchange="this.form.submit()">
@@ -172,7 +186,13 @@
     </td>
     <td class="muted">
       {{ it.sku }}
-      {% if it.shopify_sku_exist %}
+      {% set w = website.get((it.sku or "")|upper) %}
+      {% if w %}
+        <div><a class="web-badge web-{{ w.state }}" href="{{ w.admin_url or w.storefront_url }}" target="_blank" rel="noopener noreferrer"
+                title="{{ w.title }}">{{ WEBSITE_LABELS[w.state] }}</a></div>
+      {% elif website_scanned_at %}
+        <div class="muted" style="font-size:12px;">不在网站上</div>
+      {% elif it.shopify_sku_exist %}
         <div class="muted">已连接Shopify</div>
       {% endif %}
     </td>

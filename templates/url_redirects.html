@@ -1,0 +1,172 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .ur-legend td { padding: 4px 8px; }
+  tr.ur-create td { background: #e9f7ee !important; }
+  tr.ur-update td { background: #fff4e0 !important; }
+  tr.ur-delete td { background: #ffeef0 !important; }
+  tr.ur-conflict td { background: #f3e8ff !important; }
+  .ur-create-text { color: #1f6b3a; font-weight: 700; }
+  .ur-update-text { color: #b45309; font-weight: 700; }
+  .ur-delete-text { color: #b00020; font-weight: 700; }
+  .ur-conflict-text { color: #7e22ce; font-weight: 700; }
+  .ur-filter a { margin-right: 12px; }
+  .ur-filter a.active { text-decoration: underline; }
+  td.ur-img img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; display: block; }
+  .ur-path { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; }
+  .ur-old { color: #8a8a8a; text-decoration: line-through; }
+  .ur-msg { font-size: 12px; font-weight: 600; }
+  .ur-msg.bad { color: #b00020; }
+  tr.ur-done td { background: #f1faf4 !important; color: #52514e; }
+  .ur-done-msg { color: #1f6b3a; font-weight: 700; }
+  .ur-actions .btn { white-space: nowrap; }
+  .ur-nowrap { white-space: nowrap; }
+  .ur-box { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .ur-box table { margin-top: 6px; }
+</style>
+{% if state.running %}<script>setTimeout(() => location.reload(), 3000);</script>{% endif %}
+
+{% set SITUATION = {
+  "create": "网站商品上有这个 SKU，还没有重定向",
+  "update": "重定向指错了",
+  "delete": "这次扫描网站上没有这个 SKU，重定向已不再使用",
+  "conflict": "同一个 SKU 写在了多个上架商品上",
+} %}
+{% set WILL = {
+  "create": "创建 /SKU → 这个商品",
+  "update": "改为指向现在写着这个 SKU 的商品",
+  "delete": "删除这个重定向（SKU 改掉了或商品被删了；指向别的商品时扫码会打开别的包）",
+  "conflict": "不会自动处理：请在 Shopify 里把多余商品的 SKU 删掉或改正",
+} %}
+{% set SHORT = {"create": "待创建", "update": "指错了", "delete": "已不用", "conflict": "SKU 冲突"} %}
+
+<h2>URL重定向管理</h2>
+<p class="muted">
+  标签上的二维码会打开 <span class="ur-path">网站/SKU</span>，靠 Shopify 的 URL 重定向跳到商品页。
+  系统每次扫描网站上<b>所有</b>商品（上架、草稿、归档，不管库存多少）：写了 SKU 的，保证 <span class="ur-path">/SKU</span> 指向这个商品
+  （多个商品写了同一个 SKU 时以“上架”的为准；商品是草稿时扫码会是 404）；这次没扫到的 SKU，它的重定向会被删除。
+  只管 <span class="ur-path">/SKU</span> 这种重定向，其他重定向（页面、分类、旧网址等）一概不碰。结果不保存到数据库。
+</p>
+
+<table class="ur-legend" style="margin-bottom:12px;">
+  {% for key in ["create", "update", "delete", "conflict"] %}
+    <tr class="ur-{{ key }}"><td class="ur-{{ key }}-text">{{ SITUATION[key] }}</td><td class="muted">{{ WILL[key] }}</td></tr>
+  {% endfor %}
+</table>
+
+<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+  <form method="post" action="{{ url_for('url_redirects_check') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn btn-ghost" type="submit" {% if state.running %}disabled{% endif %}>{{ "运行中…" if state.running else "立即检查（只看不改）" }}</button>
+  </form>
+  <form method="post" action="{{ url_for('url_redirects_fix_all') }}"
+        onsubmit="return confirm('现在检查并修复所有可以自动修复的重定向？（SKU 冲突不会动）');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button class="btn" type="submit" {% if state.running %}disabled{% endif %}>立即检查并修复全部</button>
+  </form>
+  <span class="muted">
+    {% set every = "每小时" if interval_label == "1" else "每" ~ interval_label ~ "小时" %}{% if state.auto_fix %}{{ every }}自动扫描网站全部 SKU 并修复{% else %}自动修复已关闭（URL_REDIRECT_AUTO_FIX），{{ every }}只检查{% endif %}
+    {% if state.checked_at %} · 上次检查：{{ state.checked_at|dt8 }}{% endif %}
+    {% if state.next_run_at %} · 下次：{{ state.next_run_at|dt8 }}{% endif %}
+  </span>
+</div>
+<p class="muted" style="margin-top:-4px;">系统重启后的第一次自动检查只看不改，之后每次都会自动修复。</p>
+{% if state.last_error %}
+  <p class="ur-delete-text">最近一次运行失败（下面是上次成功的结果）：{{ state.last_error }}</p>
+{% endif %}
+
+{% if not state.checked_at %}
+  <p class="muted">{{ "正在检查…" if state.running else "尚未检查。点“立即检查”。" }}</p>
+{% else %}
+  <p class="ur-filter">
+    ✅ <b>{{ state.ok_count }}</b> 个 SKU 重定向正常{% if all_rows %}；<b data-count="all">{{ all_rows|length }}</b> 个需要处理：
+      <a href="{{ url_for('url_redirects_page') }}" class="{{ 'active' if not action }}">全部 {{ all_rows|length }}</a>
+      {% for key in ["create", "update", "delete", "conflict"] %}{% if counts[key] %}
+        <a href="{{ url_for('url_redirects_page', action=key) }}" class="ur-{{ key }}-text {{ 'active' if action == key }}">{{ SHORT[key] }} {{ counts[key] }}</a>
+      {% endif %}{% endfor %}
+    {% else %}，没有需要处理的。{% endif %}
+  </p>
+{% endif %}
+
+{% if rows %}
+<table>
+  <thead><tr><th></th><th>SKU</th><th>Shopify 商品</th><th>情况</th><th>现在 → 应该</th><th>操作</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    {% set p = r.products[0] if r.products else none %}
+    <tr class="ur-{{ r.action }}">
+      <td class="ur-img">{% if p and p.image %}<img src="{{ p.image }}" alt="" loading="lazy">{% endif %}</td>
+      <td><b>{% if r.in_system %}<a href="{{ url_for('item_detail', item_key=r.sku) }}" target="_blank" rel="noopener noreferrer">{{ r.sku }}</a>{% else %}{{ r.sku }}{% endif %}</b>
+        {% if not r.in_system %}<div class="muted" style="font-size:12px;">系统里没有这个 SKU</div>{% endif %}</td>
+      <td>
+        {% for prod in r.products %}
+          <div>{{ prod.title or "-" }} <span class="muted">（{{ {"ACTIVE": "上架", "DRAFT": "草稿", "ARCHIVED": "已归档"}.get(prod.status, prod.status) }}）</span>
+            {% if prod.admin_url %}<a class="ur-nowrap" href="{{ prod.admin_url }}" target="_blank" rel="noopener noreferrer">后台</a>{% endif %}</div>
+        {% endfor %}
+      </td>
+      <td class="ur-{{ r.action }}-text">{{ r.reason }}</td>
+      <td class="ur-path">
+        {% if r.current_target %}<div class="{{ 'ur-old' if r.action != 'conflict' }}">{{ r.path }} → {{ r.current_target }}</div>{% else %}<div class="muted">（没有）</div>{% endif %}
+        {% if r.action in ("create", "update") %}<div>→ {{ r.target }}</div>{% elif r.action == "delete" %}<div>→ 删除</div>{% endif %}
+      </td>
+      <td class="ur-actions">
+        {% if r.action != "conflict" %}
+          <form method="post" action="{{ url_for('url_redirects_fix_one') }}" class="js-fix">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="sku" value="{{ r.sku }}">
+            <button class="btn" type="submit">{{ {"create": "创建", "update": "修改", "delete": "删除"}[r.action] }}</button>
+          </form>
+        {% endif %}
+        {% if r.error %}<div class="ur-msg bad">上次失败：{{ r.error }}</div>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if state.last_fix %}
+  {% set f = state.last_fix %}
+  <div class="ur-box">
+    <b>上一次修复</b>（{{ "自动" if f.auto else "手动" }}，{{ f.at|dt8 }}）：成功 {{ f.done_count }} 个{% if f.failed_count %}，失败 {{ f.failed_count }} 个{% endif %}。
+    <span class="muted">只保留在内存里，系统重启后清空。</span>
+    {% if f.done or f.failed %}
+    <details><summary>查看明细</summary>
+      <table>
+        <tr><th>SKU</th><th>操作</th><th>原来</th><th>现在</th><th>结果</th></tr>
+        {% for c in f.done + f.failed %}
+          <tr><td>{{ c.sku }}</td><td>{{ {"create": "创建", "update": "修改", "delete": "删除"}.get(c.action, c.action) }}</td>
+            <td class="ur-path">{{ c.from or "-" }}</td><td class="ur-path">{{ c.to or ("（已删除）" if c.action == "delete" else "-") }}</td>
+            <td>{% if c.message %}<span class="ur-msg bad">失败：{{ c.message }}</span>{% else %}✓{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+  </div>
+{% endif %}
+
+<script>
+(() => {
+  // Fix one row in place (no reload, no jump to the top).
+  document.querySelectorAll("form.js-fix").forEach(form => form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = form.querySelector("button");
+    const cell = form.closest("td");
+    button.disabled = true;
+    try {
+      const response = await fetch(form.action, {method: "POST", body: new FormData(form),
+        headers: {"X-Requested-With": "fetch", "Accept": "application/json"}});
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || "修复失败");
+      form.closest("tr").className = "ur-done";
+      cell.innerHTML = '<span class="ur-done-msg">✓ 已完成</span>';
+    } catch (error) {
+      button.disabled = false;
+      let msg = cell.querySelector(".ur-msg");
+      if (!msg) { msg = document.createElement("div"); msg.className = "ur-msg bad"; cell.appendChild(msg); }
+      msg.textContent = error.message;
+    }
+  }));
+})();
+</script>
+{% endblock %}

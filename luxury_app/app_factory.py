@@ -14,6 +14,7 @@ from .security import init_csrf
 from .routes import register_all
 from .shopify_maintenance import start_shopify_maintenance_scheduler
 from .shopify_stock_check import start_scheduler as start_shopify_stock_check_scheduler
+from .url_redirects import start_scheduler as start_url_redirect_scheduler
 
 
 def create_app():
@@ -131,6 +132,15 @@ def create_app():
         import logging
         logging.getLogger(__name__).error(
             f"Failed to start Shopify stock check scheduler: {e}", exc_info=True
+        )
+
+    # URL重定向管理: hourly check + fix of “/SKU” redirects (Shopify only, no DB writes).
+    try:
+        start_url_redirect_scheduler(items)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(
+            f"Failed to start URL redirect manager: {e}", exc_info=True
         )
 
     # Daily items_view maintenance is independently isolated from Flask and Shopify.
