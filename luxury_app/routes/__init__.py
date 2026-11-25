@@ -12,6 +12,7 @@ from .shopify_files import register as register_shopify_files
 from .inventory_check import register as register_inventory_check
 from .shopify_stock_check import register as register_shopify_stock_check
 from .url_redirects import register as register_url_redirects
+from .media import register as register_media
 from .claude_analytics import register as register_claude_analytics
 
 
@@ -71,5 +72,7 @@ def register_all(
     )
     # URL重定向管理: reads the real items' SKUs, changes only Shopify redirects.
     register_url_redirects(app, management_items if management_items is not None else items)
+    # 图片与视频 (Alibaba Cloud OSS): all roles; Management only its own items.
+    register_media(app, items, management_items=management_items)
 
 

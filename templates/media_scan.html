@@ -1,0 +1,120 @@
+{% extends "layout.html" %}
+{% block content %}
+{% set T = {
+  "title": "Scan & Shoot" if english else "扫码拍照",
+  "intro": "Scan the QR code on an item's label to shoot or manage its photos and videos." if english else "扫描包上标签的二维码，然后拍首图、细节图、视频，或管理这只包的所有图片和视频。",
+  "start": "Start camera" if english else "打开摄像头",
+  "stop": "Stop" if english else "关闭摄像头",
+  "manual": "Or enter SKU" if english else "或输入 SKU",
+  "go": "Open" if english else "打开",
+  "wrong": "This is not a luxuryevermore.com/{SKU} QR code." if english else "这不是 luxuryevermore.com/{SKU} 格式的二维码。",
+  "failed": "Camera could not start. Check camera permission, or enter the SKU." if english else "摄像头打不开，请检查浏览器的相机权限，或者直接输入 SKU。",
+  "found": "Found" if english else "识别到",
+} %}
+<style>
+  .ms-page { max-width: 560px; margin: 0 auto; }
+  .ms-camera { width: 100%; max-width: 420px; margin: 10px auto; border-radius: 12px; overflow: hidden; background: #111; min-height: 260px; }
+  .ms-actions { display: flex; gap: 8px; justify-content: center; margin: 8px 0; }
+  .ms-actions .btn { min-height: 46px; font-size: 16px; padding: 8px 18px; }
+  .ms-manual { display: flex; gap: 8px; margin-top: 12px; }
+  .ms-manual input { flex: 1; min-height: 46px; font-size: 18px; text-transform: uppercase; }
+  .ms-manual button { min-height: 46px; }
+  .ms-status { margin-top: 10px; min-height: 24px; font-weight: 600; text-align: center; }
+  .ms-status.bad { color: #b00020; }
+  /* On phones, keep the camera buttons on the first screen: the menu folds away. */
+  .ms-menu-toggle { display: none; }
+  @media (max-width: 720px) {
+    body:not(.nav-open) > nav { display: none !important; }
+    .ms-menu-toggle { display: inline-flex; margin-bottom: 8px; }
+  }
+  .ms-menu-toggle { min-height: 38px; padding: 6px 12px; border: 1px solid #cfcfcf; border-radius: 8px; background: #fff; font: inherit; }
+</style>
+<div class="ms-page">
+  <button type="button" class="ms-menu-toggle" onclick="document.body.classList.toggle('nav-open')">☰ {{ "Menu" if english else "菜单" }}</button>
+  <h2>{{ T.title }}</h2>
+  <p class="muted">{{ T.intro }}</p>
+  <div class="ms-camera"><div id="ms-reader"></div></div>
+  <div class="ms-actions">
+    <button class="btn" type="button" id="ms-start">{{ T.start }}</button>
+    <button class="btn btn-ghost" type="button" id="ms-stop" hidden>{{ T.stop }}</button>
+  </div>
+  <div class="ms-status" id="ms-status" aria-live="polite"></div>
+  <form class="ms-manual" id="ms-manual" action="{{ url_for('media_scan_page') }}" method="get">
+    <input name="sku" id="ms-sku" placeholder="{{ T.manual }}" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button class="btn" type="submit">{{ T.go }}</button>
+  </form>
+</div>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(() => {
+  const T = {{ T|tojson }};
+  const status = document.getElementById("ms-status");
+  const startButton = document.getElementById("ms-start");
+  const stopButton = document.getElementById("ms-stop");
+  let scanner = null, running = false, done = false;
+
+  function skuFromQr(raw) {
+    const value = String(raw || "").trim();
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (host !== "luxuryevermore.com" || parts.length !== 1) return "";
+      const sku = decodeURIComponent(parts[0]).trim().toUpperCase();
+      return /^[A-Z0-9_-]{2,64}$/.test(sku) ? sku : "";
+    } catch (_) { return ""; }
+  }
+
+  function open(sku) {
+    done = true;
+    status.className = "ms-status";
+    status.textContent = `${T.found} ${sku}…`;
+    if (navigator.vibrate) navigator.vibrate(60);
+    window.location.href = {{ url_for('media_scan_page')|tojson }} + "/" + encodeURIComponent(sku);
+  }
+
+  const SETUP = window.Html5QrcodeSupportedFormats ? {
+    verbose: false, formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+    experimentalFeatures: {useBarCodeDetectorIfSupported: true},
+  } : false;
+  const area = (w, h) => { const side = Math.max(200, Math.floor(Math.min(w, h) * 0.8)); return {width: side, height: side}; };
+
+  async function start() {
+    if (running) return;
+    if (typeof Html5Qrcode === "undefined") { status.className = "ms-status bad"; status.textContent = T.failed; return; }
+    try {
+      scanner = scanner || new Html5Qrcode("ms-reader", SETUP);
+      await scanner.start({facingMode: "environment"}, {fps: 20, qrbox: area, aspectRatio: 1.0, disableFlip: true},
+        text => {
+          if (done) return;
+          const sku = skuFromQr(text);
+          if (sku) { stop(); open(sku); }
+          else { status.className = "ms-status bad"; status.textContent = T.wrong; }
+        }, () => {});
+      running = true;
+      startButton.hidden = true; stopButton.hidden = false;
+    } catch (_) {
+      status.className = "ms-status bad"; status.textContent = T.failed;
+    }
+  }
+
+  async function stop() {
+    if (!running || !scanner) return;
+    running = false;
+    try { await scanner.stop(); } catch (_) { /* already stopped */ }
+    startButton.hidden = false; stopButton.hidden = true;
+  }
+
+  startButton.addEventListener("click", start);
+  stopButton.addEventListener("click", stop);
+  document.getElementById("ms-manual").addEventListener("submit", event => {
+    const raw = document.getElementById("ms-sku").value;
+    const sku = skuFromQr(raw) || String(raw || "").trim().toUpperCase();
+    event.preventDefault();
+    if (/^[A-Z0-9_-]{2,64}$/.test(sku)) open(sku);
+  });
+  window.addEventListener("pagehide", stop);
+  start();   // most phones allow the camera right away; otherwise the button works
+})();
+</script>
+{% endblock %}

@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_media_manager.html" import media_assets, media_manager %}
 {% block content %}
 <h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
 <p class="muted">Brand: {{ item.brand }} · Type: {{ item.source_type or "" }} · Status: <b>{{ item.status }}</b></p>
@@ -32,6 +33,13 @@
   <button class="btn" type="button" onclick='deleteManagementItem({{ (item._id|string)|tojson }}, {{ item.name|tojson }})'>Delete</button>
   {% endif %}
 </div>
+
+{% if media_config_error is defined %}
+{% set media_error = media_config_error() %}
+<h3 id="media">Photos &amp; Videos <a class="lm-btn" href="{{ url_for('media_item_page', sku=item.sku) }}" style="margin-left:8px; vertical-align:middle;">📷 Shoot</a></h3>
+{{ media_assets(True) }}
+{{ media_manager(item.sku, True, media_error) }}
+{% endif %}
 
 {% if scan_records is not none %}
 {% set SCAN_LOCATION_EN = {"store": "Store display", "room": "Back room", "legacy": "Legacy check (no location)"} %}

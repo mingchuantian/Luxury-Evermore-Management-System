@@ -1,0 +1,139 @@
+{% extends "layout.html" %}
+{% from "_media_manager.html" import media_assets, media_manager %}
+{% block content %}
+{% set T = {
+  "shoot_main": "Main photo" if english else "拍首图",
+  "shoot_detail": "Detail photos" if english else "拍细节图",
+  "shoot_video": "Video" if english else "拍视频",
+  "manage": "Manage media" if english else "管理媒体",
+  "again_detail": "Next detail photo" if english else "继续拍下一张细节图",
+  "again_main": "Retake main photo" if english else "再拍一张首图",
+  "again_video": "Record another video" if english else "再拍一段视频",
+  "finish": "Done" if english else "完成",
+  "queued": "Added to uploads" if english else "已加入上传",
+  "scan_next": "Scan next item" if english else "扫下一只包",
+  "detail": "Item details" if english else "商品详情",
+  "hint": "Photos and videos are uploaded in full quality to cloud storage. You can keep shooting while they upload." if english else "照片和视频会原图上传到云端，不压缩。上传在后台进行，可以一边上传一边继续拍。",
+  "main_raw": "Main photo (original)" if english else "首图（原始）",
+  "detail_raw": "Detail photos (original)" if english else "细节图（原始）",
+  "video": "Videos" if english else "视频",
+  "count": "taken this time" if english else "本次已拍",
+} %}
+{{ media_assets(english) }}
+<style>
+  .mi-page { max-width: 720px; margin: 0 auto; }
+  .mi-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+  .mi-head img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; border: 1px solid #ddd; }
+  .mi-head h2 { margin: 0; font-size: 20px; }
+  .mi-head .mi-sku { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; color: #52514e; }
+  .mi-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+  .mi-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 104px;
+             border-radius: 14px; border: 1px solid #d9d7d2; background: #fff; font-size: 17px; font-weight: 700; color: #1f2325;
+             cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; text-align: center; padding: 10px; }
+  .mi-tile .mi-icon { font-size: 30px; line-height: 1; }
+  .mi-tile:active { transform: scale(.98); background: #f4f3f0; }
+  .mi-tile.on { border: 2px solid #1f2325; }
+  .mi-again { position: sticky; bottom: 0; z-index: 5; display: none; gap: 8px; padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+              background: linear-gradient(to top, var(--bg, #f6f5f2) 70%, transparent); }
+  .mi-again.show { display: flex; }
+  .mi-again label, .mi-again button { flex: 1; min-height: 52px; font-size: 16px; }
+  .mi-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  #mi-manage[hidden] { display: none; }
+  /* On phones, keep the camera buttons on the first screen: the menu folds away. */
+  .lm-menu-toggle { display: none; }
+  @media (max-width: 720px) {
+    body:not(.nav-open) > nav { display: none !important; }
+    .lm-menu-toggle { display: inline-flex; margin-bottom: 8px; }
+  }
+</style>
+
+<div class="mi-page">
+  <button type="button" class="lm-btn lm-menu-toggle" onclick="document.body.classList.toggle('nav-open')">☰ {{ "Menu" if english else "菜单" }}</button>
+  <div class="mi-head">
+    {% if item.shopify_details and item.shopify_details.featured_image %}<img src="{{ item.shopify_details.featured_image }}" alt="">{% endif %}
+    <div>
+      <h2>{{ item.brand or "" }} {{ item.name or "" }}</h2>
+      <div class="mi-sku">{{ item.sku }}</div>
+    </div>
+  </div>
+
+  {% if media_error %}
+    {{ media_manager(item.sku, english, media_error) }}
+  {% else %}
+    <p class="lm-note">{{ T.hint }}</p>
+    <div class="mi-tiles">
+      <label class="mi-tile" data-shoot="main_raw"><span class="mi-icon">📷</span>{{ T.shoot_main }}
+        <input type="file" accept="image/*" capture="environment" hidden data-category="main_raw" data-label="{{ T.main_raw }}"></label>
+      <label class="mi-tile" data-shoot="detail_raw"><span class="mi-icon">🔍</span>{{ T.shoot_detail }}
+        <input type="file" accept="image/*" capture="environment" hidden data-category="detail_raw" data-label="{{ T.detail_raw }}"></label>
+      <label class="mi-tile" data-shoot="video"><span class="mi-icon">🎬</span>{{ T.shoot_video }}
+        <input type="file" accept="video/*" capture="environment" hidden data-category="video" data-label="{{ T.video }}"></label>
+      <button type="button" class="mi-tile" id="mi-manage-toggle"><span class="mi-icon">🗂️</span>{{ T.manage }}</button>
+    </div>
+
+    <div class="lm-queue"></div>
+
+    <div id="mi-manage" hidden>
+      <div class="lm-manager" data-base="{{ url_for('media_item_page', sku=item.sku) }}">
+        <div class="lm-body"><div class="lm-note">{{ "Loading…" if english else "读取中…" }}</div></div>
+      </div>
+    </div>
+
+    <div class="mi-again" id="mi-again">
+      <label class="btn" id="mi-again-label"><span id="mi-again-text"></span>
+        <input type="file" hidden id="mi-again-input"></label>
+      <button type="button" class="btn btn-ghost" id="mi-finish">{{ T.finish }}</button>
+    </div>
+  {% endif %}
+
+  <div class="mi-links">
+    <a class="lm-btn" href="{{ url_for('media_scan_page') }}">📷 {{ T.scan_next }}</a>
+    <a class="lm-btn" href="{{ detail_url }}">{{ T.detail }}</a>
+  </div>
+</div>
+
+{% if not media_error %}
+<script>
+(() => {
+  const base = {{ url_for('media_item_page', sku=item.sku)|tojson }};
+  const T = {{ {"again_detail": T.again_detail, "again_main": T.again_main, "again_video": T.again_video, "count": T.count}|tojson }};
+  const again = document.getElementById("mi-again");
+  const againInput = document.getElementById("mi-again-input");
+  const againText = document.getElementById("mi-again-text");
+  const counts = {};
+  let current = null;
+
+  function shot(input) {
+    if (!input.files.length) return;
+    const category = input.dataset.category;
+    LEMedia.enqueue(base, category, input.dataset.label, Array.from(input.files));
+    counts[category] = (counts[category] || 0) + input.files.length;
+    input.value = "";
+    if (navigator.vibrate) navigator.vibrate(40);
+    // A big button to open the camera again right away (one tap per shot).
+    current = input;
+    againInput.accept = input.accept;
+    againInput.setAttribute("capture", "environment");
+    againInput.dataset.category = category;
+    againInput.dataset.label = input.dataset.label;
+    const label = category === "detail_raw" ? T.again_detail : category === "video" ? T.again_video : T.again_main;
+    againText.textContent = `${label}（${T.count} ${counts[category]}）`;
+    again.classList.add("show");
+  }
+
+  document.querySelectorAll(".mi-tile input[type=file]").forEach(input => input.addEventListener("change", () => shot(input)));
+  againInput.addEventListener("change", () => shot(againInput));
+  document.getElementById("mi-finish").addEventListener("click", () => again.classList.remove("show"));
+
+  const manage = document.getElementById("mi-manage");
+  const toggle = document.getElementById("mi-manage-toggle");
+  toggle.addEventListener("click", () => {
+    manage.hidden = !manage.hidden;
+    toggle.classList.toggle("on", !manage.hidden);
+    if (!manage.hidden) manage.scrollIntoView({behavior: "smooth", block: "start"});
+  });
+  if (location.hash === "#manage") toggle.click();
+})();
+</script>
+{% endif %}
+{% endblock %}

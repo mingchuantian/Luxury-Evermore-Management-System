@@ -1,0 +1,304 @@
+{# Item media (OSS): shared upload engine + manager. Use media_assets() once per page,
+   then media_manager(sku) wherever the manager should appear. #}
+
+{% macro media_assets(english=False) %}
+<style>
+  .lm-wrap { margin: 10px 0; }
+  .lm-note { font-size: 13px; color: var(--muted, #6b6b6b); }
+  .lm-error { padding: 10px 12px; border: 1px solid #da9696; background: #fff5f5; color: #8a1c1c; border-radius: 8px; }
+  .lm-cat { margin: 14px 0 18px; }
+  .lm-cat-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .lm-cat-head h4 { margin: 0; font-size: 16px; flex: 1 1 auto; }
+  .lm-count { font-size: 13px; color: var(--muted, #6b6b6b); font-weight: 400; }
+  .lm-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 38px; padding: 6px 12px;
+            border: 1px solid #cfcfcf; border-radius: 8px; background: #fff; color: #1f2325; font: inherit; font-size: 14px;
+            cursor: pointer; text-decoration: none; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .lm-btn.primary { background: #1f2325; border-color: #1f2325; color: #fff; }
+  .lm-btn[disabled] { opacity: .5; }
+  .lm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .lm-tile { position: relative; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; background: #ecebe8; }
+  .lm-tile a { display: block; width: 100%; height: 100%; }
+  .lm-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .lm-tile .lm-fallback { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+                          font-size: 12px; color: #52514e; text-align: center; padding: 6px; word-break: break-all; }
+  .lm-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; border-radius: 50%;
+             background: rgba(0,0,0,.55); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; pointer-events: none; }
+  .lm-del { position: absolute; top: 4px; right: 4px; width: 30px; height: 30px; border-radius: 50%; border: 0;
+            background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 30px; cursor: pointer; }
+  .lm-size { position: absolute; left: 4px; bottom: 4px; padding: 0 5px; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; }
+  .lm-empty { font-size: 13px; color: var(--muted, #6b6b6b); padding: 6px 0; }
+  .lm-queue { margin: 10px 0; }
+  .lm-job { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; border: 1px solid #e2e1dd; border-radius: 8px; margin-bottom: 6px; background: #fff; font-size: 13px; }
+  .lm-job .lm-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: #ecebe8; overflow: hidden; }
+  .lm-job .lm-bar i { display: block; height: 100%; width: 0; background: #1d4ed8; transition: width .2s; }
+  .lm-job.done .lm-bar i { background: #1f6b3a; }
+  .lm-job.failed { border-color: #da9696; background: #fff5f5; }
+  .lm-job.failed .lm-bar i { background: #b00020; }
+  .lm-job .lm-state { white-space: nowrap; font-weight: 600; }
+  .lm-job.done .lm-state { color: #1f6b3a; }
+  .lm-job.failed .lm-state { color: #b00020; }
+  @media (max-width: 720px) {
+    .lm-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .lm-btn { min-height: 42px; }
+  }
+</style>
+<script>
+window.LEMedia = window.LEMedia || (() => {
+  const EN = {{ english|tojson }};
+  const T = EN ? {
+    uploading: "Uploading", done: "Uploaded", failed: "Failed", waiting: "Waiting", retry: "Retry",
+    network: "Network interrupted", leave: "Uploads are still running. Leave this page?",
+    confirmDelete: name => `Delete ${name}? This cannot be undone.`, add: "+ Add", zip: "Download all (.zip)",
+    share: "Save to phone", sharing: "Preparing…", empty: "Nothing yet", files: n => `${n} file${n === 1 ? "" : "s"}`,
+    loadFailed: "Could not load media: ", shareFailed: "Could not share: ",
+  } : {
+    uploading: "上传中", done: "已上传", failed: "失败", waiting: "排队中", retry: "重试",
+    network: "网络中断", leave: "还有文件在上传，确定离开吗？",
+    confirmDelete: name => `确定删除 ${name}？删除后无法恢复。`, add: "+ 添加", zip: "全部下载（zip）",
+    share: "存到手机", sharing: "准备中…", empty: "还没有", files: n => `${n} 个`,
+    loadFailed: "读取媒体失败：", shareFailed: "分享失败：",
+  };
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function api(url, body) {
+    const response = await fetch(url, {
+      method: body ? "POST" : "GET",
+      headers: {"Content-Type": "application/json", "Accept": "application/json", "X-CSRF-Token": csrf},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) { /* not JSON */ }
+    if (!response.ok || data.ok === false) throw new Error(data.message || `HTTP ${response.status}`);
+    return data;
+  }
+
+  function put(url, blob, headers, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      Object.entries(headers || {}).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+      xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(event.loaded); };
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve()
+        : reject(new Error(`OSS ${xhr.status}${xhr.responseText.includes("SignatureDoesNotMatch") ? " (signature)" : ""}`));
+      xhr.onerror = () => reject(new Error(T.network));
+      xhr.send(blob);
+    });
+  }
+
+  async function retry(fn, tries = 4) {
+    for (let attempt = 1; ; attempt++) {
+      try { return await fn(); } catch (error) {
+        if (attempt >= tries) throw error;
+        await sleep(1500 * attempt);
+      }
+    }
+  }
+
+  // Upload one file straight to OSS. Big files go in parts (only a failed part is resent).
+  async function upload(base, category, file, onProgress) {
+    const plan = await api(`${base}/upload-url`, {
+      category, filename: file.name || "photo.jpg", content_type: file.type || "", size: file.size,
+    });
+    if (plan.mode === "single") {
+      await retry(() => put(plan.url, file, plan.headers, loaded => onProgress(loaded / file.size)));
+      await api(`${base}/complete`, {key: plan.key});
+      return plan.key;
+    }
+    let sent = 0;
+    try {
+      for (const part of plan.parts) {
+        const start = (part.number - 1) * plan.part_size;
+        const chunk = file.slice(start, Math.min(file.size, start + plan.part_size), "");
+        await retry(() => put(part.url, chunk, {}, loaded => onProgress((sent + loaded) / file.size)));
+        sent += chunk.size;
+        onProgress(sent / file.size);
+      }
+      await api(`${base}/complete`, {key: plan.key, upload_id: plan.upload_id});
+    } catch (error) {
+      api(`${base}/abort`, {key: plan.key, upload_id: plan.upload_id}).catch(() => {});
+      throw error;
+    }
+    return plan.key;
+  }
+
+  function size(bytes) {
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+    return Math.max(1, Math.round(bytes / 1024)) + " KB";
+  }
+
+  function escapeHtml(value) {
+    const element = document.createElement("div");
+    element.textContent = value == null ? "" : String(value);
+    return element.innerHTML;
+  }
+
+  // ---------------------------------------------------------------- upload queue
+  const queue = [];
+  let running = 0;
+  const listeners = new Set();
+  const MAX_PARALLEL = 2;
+
+  function notify() { listeners.forEach(fn => fn(queue)); }
+
+  function enqueue(base, category, label, files) {
+    for (const file of files) {
+      queue.push({id: Math.random().toString(36).slice(2), base, category, label, file, progress: 0, state: "waiting", error: ""});
+    }
+    notify();
+    pump();
+  }
+
+  function pump() {
+    while (running < MAX_PARALLEL) {
+      const job = queue.find(item => item.state === "waiting");
+      if (!job) return;
+      running += 1;
+      job.state = "uploading";
+      notify();
+      upload(job.base, job.category, job.file, fraction => { job.progress = fraction; notify(); })
+        .then(() => { job.state = "done"; job.progress = 1; document.dispatchEvent(new CustomEvent("lemedia:uploaded", {detail: job})); })
+        .catch(error => { job.state = "failed"; job.error = error.message; })
+        .finally(() => { running -= 1; notify(); pump(); });
+    }
+  }
+
+  function retryJob(id) {
+    const job = queue.find(item => item.id === id);
+    if (job && job.state === "failed") { job.state = "waiting"; job.progress = 0; job.error = ""; notify(); pump(); }
+  }
+
+  window.addEventListener("beforeunload", event => {
+    if (queue.some(job => job.state === "waiting" || job.state === "uploading")) { event.preventDefault(); event.returnValue = T.leave; }
+  });
+
+  function renderQueue(element) {
+    listeners.add(jobs => {
+      const shown = jobs.slice(-30).reverse();
+      element.innerHTML = shown.map(job => `
+        <div class="lm-job ${job.state}">
+          <div>${escapeHtml(job.label)} · ${escapeHtml(job.file.name || "")} <span class="lm-note">${size(job.file.size)}</span></div>
+          <div class="lm-state">${job.state === "failed"
+            ? `${T.failed} <button type="button" class="lm-btn" data-retry="${job.id}" style="min-height:28px;padding:2px 8px;">${T.retry}</button>`
+            : job.state === "done" ? "✓ " + T.done
+            : job.state === "waiting" ? T.waiting : `${T.uploading} ${Math.round(job.progress * 100)}%`}</div>
+          <div class="lm-bar"><i style="width:${Math.round(job.progress * 100)}%"></i></div>
+          ${job.error ? `<div class="lm-note" style="grid-column:1/-1;color:#b00020;">${escapeHtml(job.error)}</div>` : ""}
+        </div>`).join("");
+    });
+    element.addEventListener("click", event => {
+      const button = event.target.closest("[data-retry]");
+      if (button) retryJob(button.dataset.retry);
+    });
+  }
+
+  // ---------------------------------------------------------------- manager
+  function mountManager(root) {
+    const base = root.dataset.base;
+    const body = root.querySelector(".lm-body");
+
+    async function load() {
+      try {
+        const data = await api(`${base}/list`);
+        body.innerHTML = data.categories.map(cat => `
+          <section class="lm-cat" data-category="${cat.category}">
+            <div class="lm-cat-head">
+              <h4>${escapeHtml(cat.label)} <span class="lm-count">${T.files(cat.files.length)}${cat.files.length ? " · " + size(cat.total_bytes) : ""}</span></h4>
+              <label class="lm-btn">${T.add}<input type="file" hidden multiple accept="${cat.kind === "video" ? "video/*" : "image/*"}"
+                     data-add="${cat.category}" data-label="${escapeHtml(cat.label)}"></label>
+              ${cat.bulk && cat.files.length ? `
+                <a class="lm-btn" href="${base}/zip/${cat.category}">${T.zip}</a>
+                ${navigator.canShare ? `<button type="button" class="lm-btn" data-share="${cat.category}">${T.share}</button>` : ""}` : ""}
+            </div>
+            ${cat.files.length ? `<div class="lm-grid">${cat.files.map(file => `
+              <div class="lm-tile">
+                <a href="${file.url}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(file.name)}">
+                  <img src="${file.thumb}" alt="" loading="lazy" data-name="${escapeHtml(file.name)}">
+                </a>
+                ${cat.kind === "video" ? '<span class="lm-play">▶</span>' : ""}
+                <span class="lm-size">${size(file.size)}</span>
+                <button type="button" class="lm-del" data-delete="${escapeHtml(file.key)}" data-name="${escapeHtml(file.name)}" aria-label="delete">×</button>
+              </div>`).join("")}</div>` : `<div class="lm-empty">${T.empty}</div>`}
+          </section>`).join("");
+        root._data = data;
+      } catch (error) {
+        body.innerHTML = `<div class="lm-error">${escapeHtml(T.loadFailed + error.message)}</div>`;
+      }
+    }
+
+    // A thumbnail OSS could not make (e.g. an unusual format): show the file name instead.
+    root.addEventListener("error", event => {
+      const img = event.target;
+      if (img.tagName !== "IMG" || !img.dataset.name) return;
+      const box = document.createElement("div");
+      box.className = "lm-fallback";
+      box.textContent = img.dataset.name;
+      img.replaceWith(box);
+    }, true);
+
+    root.addEventListener("change", event => {
+      const input = event.target.closest("input[data-add]");
+      if (!input || !input.files.length) return;
+      enqueue(base, input.dataset.add, input.dataset.label, Array.from(input.files));
+      input.value = "";
+    });
+
+    root.addEventListener("click", async event => {
+      const del = event.target.closest("[data-delete]");
+      if (del) {
+        event.preventDefault();
+        if (!confirm(T.confirmDelete(del.dataset.name))) return;
+        del.disabled = true;
+        try { await api(`${base}/delete`, {key: del.dataset.delete}); del.closest(".lm-tile").remove(); load(); }
+        catch (error) { del.disabled = false; alert(error.message); }
+        return;
+      }
+      const share = event.target.closest("[data-share]");
+      if (share) {
+        const cat = (root._data?.categories || []).find(c => c.category === share.dataset.share);
+        if (!cat) return;
+        const label = share.textContent;
+        share.disabled = true; share.textContent = T.sharing;
+        try {
+          const files = await Promise.all(cat.files.map(async file => {
+            const blob = await (await fetch(file.url)).blob();
+            return new File([blob], file.download_name, {type: blob.type || "image/jpeg"});
+          }));
+          if (navigator.canShare && navigator.canShare({files})) await navigator.share({files});
+          else throw new Error("not supported");
+        } catch (error) {
+          if (error.name !== "AbortError") alert(T.shareFailed + error.message);
+        } finally { share.disabled = false; share.textContent = label; }
+      }
+    });
+
+    document.addEventListener("lemedia:uploaded", event => { if (event.detail.base === base) scheduleReload(); });
+    let timer = null;
+    function scheduleReload() { clearTimeout(timer); timer = setTimeout(load, 800); }
+    root._reload = load;
+    load();
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".lm-manager[data-base]").forEach(mountManager);
+    document.querySelectorAll(".lm-queue").forEach(renderQueue);
+  });
+
+  return {enqueue, upload, api, size};
+})();
+</script>
+{% endmacro %}
+
+{% macro media_manager(sku, english=False, error=None) %}
+<div class="lm-wrap">
+  {% if error %}
+    <div class="lm-error">{{ error }}</div>
+  {% else %}
+    <div class="lm-queue"></div>
+    <div class="lm-manager" data-base="{{ url_for('media_item_page', sku=sku) }}">
+      <div class="lm-body"><div class="lm-note">{{ "Loading…" if english else "读取中…" }}</div></div>
+    </div>
+  {% endif %}
+</div>
+{% endmacro %}

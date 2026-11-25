@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_media_manager.html" import media_assets, media_manager %}
 {% block content %}
 <h2>{{ item.name }} <span class="muted">({{ item.sku }})</span></h2>
 
@@ -291,6 +292,13 @@
     <li>利润：{{ item.profit or 0 }}</li>
     {% if item._sold.sale_note %}<li>销售单备注：{{ item._sold.sale_note }}</li>{% endif %}
   </ul>
+{% endif %}
+
+{% if media_config_error is defined %}
+{% set media_error = media_config_error() %}
+<h3 id="media">图片与视频 <a class="lm-btn" href="{{ url_for('media_item_page', sku=item.sku) }}" style="margin-left:8px; vertical-align:middle;">📷 去拍照</a></h3>
+{{ media_assets(False) }}
+{{ media_manager(item.sku, False, media_error) }}
 {% endif %}
 
 {% if scan_records is not none %}
